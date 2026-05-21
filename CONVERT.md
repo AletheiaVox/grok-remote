@@ -123,14 +123,14 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | lib/routes/system/models.js         | lib/routes/system/models.ts          |
 | [x]    | lib/routes/system/sessions.js       | lib/routes/system/sessions.ts        |
 | [x]    | lib/routes/system/setup.js          | lib/routes/system/setup.ts           |
-| [ ]    | lib/routes/system/skills.js         | lib/routes/system/skills.ts          |
+| [x]    | lib/routes/system/skills.js         | lib/routes/system/skills.ts          |
 | [x]    | lib/routes/system/worktrees.js      | lib/routes/system/worktrees.ts       |
 
 ### Phase 4 — top-level server / installer / bin
 
 | Status | File                          | Target                          |
 |--------|-------------------------------|----------------------------------|
-| [ ]    | server.js                     | server.ts                        |
+| [x]    | server.js                     | server.ts                        |
 | [ ]    | installer.js                  | installer.ts                     |
 | [ ]    | bin/gr                        | bin/gr (shebang `node`, stays JS or compiled .ts) |
 | [skip] | public/sw.js                  | service worker, browser-served as-is |

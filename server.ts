@@ -1,18 +1,14 @@
 #!/usr/bin/env node
 // grok-remote server
-//
-// Serves the built Vite dashboard plus the /api surface. Designed to sit on
-// your tailnet so you can reach it from any device you own. The
-// remote-agent endpoints live below.
 
-import http from 'node:http';
+import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 
-import { AgentManager } from './lib/agent-manager.js';
+import { AgentManager, type PublicAgent } from './lib/agent-manager.js';
 import { load as loadSettings, save as saveSettings } from './lib/settings.js';
 import { startRetentionTimer } from './lib/retention.js';
 import { inferDevServerUrl } from './lib/dev-url.js';
@@ -28,22 +24,23 @@ import {
   runUpdate as runVersionUpdate,
   isUpdateInProgress,
   readReleases,
+  type UpdateStepEvent,
 } from './lib/version-update.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const DIST = path.join(ROOT, 'dist');
-const PORT = parseInt(process.env.PORT || '7910', 10);
-const HOST = process.env.HOST || '0.0.0.0';
+const PORT = parseInt(process.env['PORT'] || '7910', 10);
+const HOST = process.env['HOST'] || '0.0.0.0';
 
-const APP_VERSION = (() => {
+const APP_VERSION: string = (() => {
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { version?: string };
     return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
   } catch { return '0.0.0'; }
 })();
 
-const MIME = {
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js':   'text/javascript; charset=utf-8',
   '.mjs':  'text/javascript; charset=utf-8',
@@ -62,20 +59,27 @@ const MIME = {
 
 const manager = new AgentManager();
 
-function safeJoin(base, rel) {
+interface TailscaleIdentity {
+  backend: string;
+  dns: string;
+  ip: string;
+  hostname: string;
+}
+
+function safeJoin(base: string, rel: string): string | null {
   const target = path.resolve(base, '.' + rel);
   if (!target.startsWith(base)) return null;
   return target;
 }
 
-function tailscaleIdentity() {
+function tailscaleIdentity(): TailscaleIdentity | null {
   const r = spawnSync('tailscale', ['status', '--json'], { encoding: 'utf8' });
   if (r.status !== 0) return null;
   try {
-    const j = JSON.parse(r.stdout);
+    const j = JSON.parse(r.stdout) as { Self?: { DNSName?: string; TailscaleIPs?: string[]; HostName?: string }; BackendState?: string };
     const self = j.Self || {};
     return {
-      backend: j.BackendState,
+      backend: j.BackendState || '',
       dns: (self.DNSName || '').replace(/\.$/, ''),
       ip:  (self.TailscaleIPs && self.TailscaleIPs[0]) || '',
       hostname: self.HostName || os.hostname(),
@@ -83,9 +87,9 @@ function tailscaleIdentity() {
   } catch { return null; }
 }
 
-function serveStatic(req, res) {
-  const url = decodeURIComponent((req.url || '/').split('?')[0]);
-  let rel = url === '/' ? '/index.html' : url;
+function serveStatic(req: IncomingMessage, res: ServerResponse): void {
+  const url = decodeURIComponent((req.url || '/').split('?')[0] || '/');
+  const rel = url === '/' ? '/index.html' : url;
   let target = safeJoin(DIST, rel);
   if (!target || !fs.existsSync(target) || fs.statSync(target).isDirectory()) {
     target = path.join(DIST, 'index.html');
@@ -100,16 +104,16 @@ function serveStatic(req, res) {
   fs.createReadStream(target).pipe(res);
 }
 
-function sendJson(res, status, body) {
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
 }
 
-async function readJsonBody(req, limitBytes = 32 * 1024 * 1024) {
-  return new Promise((resolve, reject) => {
+async function readJsonBody(req: IncomingMessage, limitBytes: number = 32 * 1024 * 1024): Promise<unknown> {
+  return new Promise<unknown>((resolve, reject) => {
     let total = 0;
-    const chunks = [];
-    req.on('data', (c) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => {
       total += c.length;
       if (total > limitBytes) {
         req.destroy();
@@ -122,23 +126,29 @@ async function readJsonBody(req, limitBytes = 32 * 1024 * 1024) {
       const raw = Buffer.concat(chunks).toString('utf8');
       if (!raw.length) return resolve({});
       try { resolve(JSON.parse(raw)); }
-      catch (err) { reject(new Error(`invalid json: ${err.message}`)); }
+      catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        reject(new Error(`invalid json: ${msg}`));
+      }
     });
     req.on('error', reject);
   });
 }
 
-function matchAgentRoute(url) {
-  // Returns { id, suffix } or null
+function matchAgentRoute(url: string): { id: string; suffix: string } | null {
   const m = url.match(/^\/api\/agents\/([^\/]+)(\/[^?]*)?$/);
-  if (!m) return null;
+  if (!m || !m[1]) return null;
   return { id: m[1], suffix: m[2] || '' };
 }
 
-async function handleApi(req, res, url, method) {
+function isNodeErr(err: unknown): err is NodeJS.ErrnoException {
+  return typeof err === 'object' && err !== null && 'code' in (err as object);
+}
+
+async function handleApi(req: IncomingMessage, res: ServerResponse, url: string, method: string): Promise<void> {
   if (url === '/api/hello' && method === 'GET') {
     const ts = tailscaleIdentity();
-    return sendJson(res, 200, {
+    sendJson(res, 200, {
       ok: true,
       app: 'grok-remote',
       version: APP_VERSION,
@@ -150,96 +160,105 @@ async function handleApi(req, res, url, method) {
       hostname: os.hostname(),
       tailscale: ts,
     });
+    return;
   }
 
   if (url === '/api/health' && method === 'GET') {
-    return sendJson(res, 200, { ok: true, version: APP_VERSION, uptime_seconds: Math.floor(process.uptime()) });
+    sendJson(res, 200, { ok: true, version: APP_VERSION, uptime_seconds: Math.floor(process.uptime()) });
+    return;
   }
 
-  // ── self-update endpoints ────────────────────────────────────────────
   if (url === '/api/version/current' && method === 'GET') {
     try {
       const data = await readCurrentVersion();
-      return sendJson(res, 200, data);
+      sendJson(res, 200, data);
     } catch (err) {
-      return sendJson(res, 500, { ok: false, error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 500, { ok: false, error: msg });
     }
+    return;
   }
   if (url === '/api/version/latest' && method === 'GET') {
     try {
       const data = await readLatestVersion();
-      return sendJson(res, 200, data);
+      sendJson(res, 200, data);
     } catch (err) {
-      return sendJson(res, 500, { ok: false, error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 500, { ok: false, error: msg });
     }
+    return;
   }
   if (url === '/api/version/diff' && method === 'GET') {
     try {
       const data = await readVersionDiff();
-      return sendJson(res, 200, data);
+      sendJson(res, 200, data);
     } catch (err) {
-      return sendJson(res, 500, { ok: false, error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 500, { ok: false, error: msg });
     }
+    return;
   }
   if ((url === '/api/version/releases' || url.startsWith('/api/version/releases?'))
       && method === 'GET') {
     try {
       const force = /\bforce=1\b/.test(url);
       const data = await readReleases({ force });
-      return sendJson(res, 200, data);
+      sendJson(res, 200, data);
     } catch (err) {
-      return sendJson(res, 500, { ok: false, error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 500, { ok: false, error: msg });
     }
+    return;
   }
   if (url === '/api/version/update' && method === 'POST') {
     if (isUpdateInProgress()) {
-      return sendJson(res, 409, { ok: false, error: 'update already in progress' });
+      sendJson(res, 409, { ok: false, error: 'update already in progress' });
+      return;
     }
-    return handleVersionUpdateStream(req, res);
+    handleVersionUpdateStream(req, res);
+    return;
   }
 
   if (url === '/api/settings' && method === 'GET') {
-    return sendJson(res, 200, loadSettings());
+    sendJson(res, 200, loadSettings());
+    return;
   }
 
   if (url === '/api/settings' && method === 'PATCH') {
     try {
       const body = await readJsonBody(req);
-      const merged = saveSettings(body || {});
-      return sendJson(res, 200, merged);
+      const merged = saveSettings((body || {}) as Record<string, unknown>);
+      sendJson(res, 200, merged);
     } catch (err) {
-      return sendJson(res, 400, { ok: false, error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 400, { ok: false, error: msg });
     }
+    return;
   }
 
   if (url === '/api/agents' && method === 'GET') {
-    return sendJson(res, 200, manager.list());
+    sendJson(res, 200, manager.list());
+    return;
   }
 
   if (url === '/api/agents/stream' && method === 'GET') {
-    return handleAgentsStream(req, res);
+    handleAgentsStream(req, res);
+    return;
   }
 
   if (url === '/api/bg-terminals' && method === 'GET') {
-    return handleGlobalBgTerminals(req, res);
+    handleGlobalBgTerminals(_req(req), res);
+    return;
   }
 
-  // GET /api/subagents/:sessionId/trace
-  //
-  // The Flow view needs to fetch a sub-agent's own trace (its updates.jsonl
-  // is where the child tool_call rows live). Sub-agents run in their own
-  // grok sessions; we know the sessionId from the parent's tool_call output
-  // but there's no AgentManager record for them. This endpoint accepts a
-  // raw sessionId and reuses the same buildTrace machinery as the agent
-  // endpoint, gated by a UUID-shape check so we never shell out with
-  // arbitrary input.
   {
     const sm = url.match(/^\/api\/subagents\/([^\/]+)\/trace$/);
     if (sm && method === 'GET') {
-      const sid = sm[1];
+      const sid = sm[1] || '';
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (!UUID_RE.test(sid)) {
-        return sendJson(res, 400, { ok: false, error: 'invalid sessionId' });
+        sendJson(res, 400, { ok: false, error: 'invalid sessionId' });
+        return;
       }
       try {
         const data = await buildTraceForSessionId(sid);
@@ -250,42 +269,33 @@ async function handleApi(req, res, url, method) {
         res.end(JSON.stringify(data));
         return;
       } catch (err) {
-        return sendJson(res, 400, { ok: false, error: err.message });
+        const msg = err instanceof Error ? err.message : String(err);
+        sendJson(res, 400, { ok: false, error: msg });
+        return;
       }
     }
   }
 
-  // GET /api/subagents/:sessionId/updates?cwd=<absolute-cwd>
-  //
-  // Fast path for sub-agent child events. Skips `grok trace` (which builds a
-  // tar.gz, extracts it, and is rate-limited by the CLI startup) and reads
-  // ~/.grok/sessions/<url-encoded cwd>/<sessionId>/updates.jsonl directly.
-  // Works while the session is still being written, which the trace
-  // endpoint does not. Returns the same shape extractChildCallsFromTrace
-  // consumes: { sessionId, updates: [...] }.
-  //
-  // When cwd is omitted we fall back to a one-level scan of every
-  // ~/.grok/sessions/<cwd>/ subdir for one named <sessionId>. The frontend
-  // always passes cwd so the scan is only a safety net.
   {
     const sm = url.match(/^\/api\/subagents\/([^\/]+)\/updates(?:\?.*)?$/);
     if (sm && method === 'GET') {
-      const sid = sm[1];
+      const sid = sm[1] || '';
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (!UUID_RE.test(sid)) {
-        return sendJson(res, 400, { ok: false, error: 'invalid sessionId' });
+        sendJson(res, 400, { ok: false, error: 'invalid sessionId' });
+        return;
       }
-      const qs   = new URL(req.url, 'http://x').searchParams;
+      const qs   = new URL(req.url || '/', 'http://x').searchParams;
       const cwd  = qs.get('cwd') || '';
       const root = path.join(os.homedir(), '.grok', 'sessions');
 
-      function tryReadUpdates(sessionDir) {
+      function tryReadUpdates(sessionDir: string): unknown[] | null {
         const p = path.join(sessionDir, 'updates.jsonl');
         if (!fs.existsSync(p)) return null;
-        let raw;
+        let raw: string;
         try { raw = fs.readFileSync(p, 'utf8'); }
         catch { return null; }
-        const out = [];
+        const out: unknown[] = [];
         for (const line of raw.split('\n')) {
           const t = line.trim();
           if (!t) continue;
@@ -294,17 +304,15 @@ async function handleApi(req, res, url, method) {
         return out;
       }
 
-      let updates = null;
-      let sourceDir = null;
+      let updates: unknown[] | null = null;
+      let sourceDir: string | null = null;
 
       if (cwd) {
-        // Direct lookup using the encoded cwd path grok itself uses.
         const dir = path.join(root, encodeURIComponent(cwd), sid);
         updates = tryReadUpdates(dir);
         if (updates) sourceDir = dir;
       }
       if (!updates) {
-        // Fallback scan. Only one level deep so this stays cheap.
         try {
           const cwds = fs.readdirSync(root);
           for (const enc of cwds) {
@@ -316,9 +324,10 @@ async function handleApi(req, res, url, method) {
       }
 
       if (!updates) {
-        return sendJson(res, 404, {
+        sendJson(res, 404, {
           ok: false, error: 'session dir not flushed yet', sessionId: sid,
         });
+        return;
       }
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
@@ -337,105 +346,120 @@ async function handleApi(req, res, url, method) {
 
   if (url === '/api/agents' && method === 'POST') {
     try {
-      const body = await readJsonBody(req) || {};
+      const body = (await readJsonBody(req) || {}) as Record<string, unknown>;
       const defaults = loadSettings();
-      // Apply global defaults only when the caller didn't specify them.
-      const settings = { ...(body.settings || {}) };
-      if (!body.model && !settings.model && defaults.defaultModel) {
-        settings.model = defaults.defaultModel;
+      const settings = { ...((body['settings'] as Record<string, unknown>) || {}) };
+      if (!body['model'] && !settings['model'] && defaults.defaultModel) {
+        settings['model'] = defaults.defaultModel;
       }
-      if (typeof settings.alwaysApprove !== 'boolean' && typeof defaults.autoApprove === 'boolean') {
-        settings.alwaysApprove = defaults.autoApprove;
+      if (typeof settings['alwaysApprove'] !== 'boolean' && typeof defaults.autoApprove === 'boolean') {
+        settings['alwaysApprove'] = defaults.autoApprove;
       }
       const merged = {
         ...body,
         settings,
-        ...(!body.cwd && defaults.defaultCwd ? { cwd: defaults.defaultCwd } : {}),
+        ...(!body['cwd'] && defaults.defaultCwd ? { cwd: defaults.defaultCwd } : {}),
       };
-      const rec = await manager.spawn(merged);
-      return sendJson(res, 201, rec);
+      const rec = await manager.spawn(merged as never);
+      sendJson(res, 201, rec);
     } catch (err) {
-      return sendJson(res, 400, { ok: false, error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 400, { ok: false, error: msg });
     }
+    return;
   }
 
   const route = matchAgentRoute(url);
   if (route) {
     const { id, suffix } = route;
     const rec = manager.get(id);
-    if (!rec) return sendJson(res, 404, { ok: false, error: 'agent not found' });
+    if (!rec) { sendJson(res, 404, { ok: false, error: 'agent not found' }); return; }
 
     if (suffix === '' && method === 'GET') {
-      return sendJson(res, 200, rec);
+      sendJson(res, 200, rec);
+      return;
     }
     if (suffix === '' && method === 'PATCH') {
       try {
         const body = await readJsonBody(req);
-        const out = await manager.update(id, body || {});
-        return sendJson(res, 200, out);
+        const out = await manager.update(id, (body || {}) as never);
+        sendJson(res, 200, out);
       } catch (err) {
-        return sendJson(res, 400, { ok: false, error: err.message });
+        const msg = err instanceof Error ? err.message : String(err);
+        sendJson(res, 400, { ok: false, error: msg });
       }
+      return;
     }
     if (suffix === '' && method === 'DELETE') {
       const ok = await manager.kill(id);
-      return sendJson(res, ok ? 200 : 404, { ok });
+      sendJson(res, ok ? 200 : 404, { ok });
+      return;
     }
     if (suffix === '/prompt' && method === 'POST') {
       try {
-        const body = await readJsonBody(req);
+        const body = (await readJsonBody(req)) as { text?: unknown; attachments?: unknown };
         const text = body?.text;
-        const attachments = Array.isArray(body?.attachments) ? body.attachments : [];
+        const attachments = Array.isArray(body?.attachments) ? body.attachments as Record<string, unknown>[] : [];
         const hasText = typeof text === 'string' && text.length > 0;
         if (!hasText && !attachments.length) {
-          return sendJson(res, 400, { ok: false, error: 'text or attachments required' });
+          sendJson(res, 400, { ok: false, error: 'text or attachments required' });
+          return;
         }
-        // Validate attachment shape up front.
         for (const att of attachments) {
           if (!att || typeof att !== 'object') {
-            return sendJson(res, 400, { ok: false, error: 'invalid attachment' });
+            sendJson(res, 400, { ok: false, error: 'invalid attachment' });
+            return;
           }
-          if (att.kind !== 'image') {
-            return sendJson(res, 400, { ok: false, error: `unsupported attachment kind: ${att.kind}` });
+          if ((att as { kind?: unknown }).kind !== 'image') {
+            sendJson(res, 400, { ok: false, error: `unsupported attachment kind: ${String((att as { kind?: unknown }).kind)}` });
+            return;
           }
-          if (typeof att.mimeType !== 'string' || !att.mimeType.startsWith('image/')) {
-            return sendJson(res, 400, { ok: false, error: 'attachment.mimeType must be image/*' });
+          const mt = (att as { mimeType?: unknown }).mimeType;
+          if (typeof mt !== 'string' || !mt.startsWith('image/')) {
+            sendJson(res, 400, { ok: false, error: 'attachment.mimeType must be image/*' });
+            return;
           }
-          if (typeof att.dataBase64 !== 'string' || !att.dataBase64.length) {
-            return sendJson(res, 400, { ok: false, error: 'attachment.dataBase64 required' });
+          const db = (att as { dataBase64?: unknown }).dataBase64;
+          if (typeof db !== 'string' || !db.length) {
+            sendJson(res, 400, { ok: false, error: 'attachment.dataBase64 required' });
+            return;
           }
         }
-        const result = await manager.prompt(id, { text: hasText ? text : '', attachments });
-        // Echo back what the server actually composed (final text after the
-        // attachment block was appended, list of saved files, sessionId, etc.)
-        // so the UI inspector can show the full server-side view.
-        return sendJson(res, 202, { ok: true, accepted: true, debug: result?.debug || null });
+        const result = await manager.prompt(id, { text: hasText ? (text as string) : '', attachments: attachments as never });
+        sendJson(res, 202, { ok: true, accepted: true, debug: result?.debug || null });
       } catch (err) {
-        return sendJson(res, 400, { ok: false, error: err.message });
+        const msg = err instanceof Error ? err.message : String(err);
+        sendJson(res, 400, { ok: false, error: msg });
       }
+      return;
     }
     if (suffix === '/cancel' && method === 'POST') {
       await manager.cancel(id);
-      return sendJson(res, 202, { ok: true, accepted: true });
+      sendJson(res, 202, { ok: true, accepted: true });
+      return;
     }
     if (suffix === '/disconnect' && method === 'POST') {
       try {
         const out = await manager.disconnect(id);
-        return sendJson(res, 200, out);
+        sendJson(res, 200, out);
       } catch (err) {
-        return sendJson(res, 400, { ok: false, error: err.message });
+        const msg = err instanceof Error ? err.message : String(err);
+        sendJson(res, 400, { ok: false, error: msg });
       }
+      return;
     }
     if (suffix === '/connect' && method === 'POST') {
       try {
         const out = await manager.connect(id);
-        return sendJson(res, 202, out);
+        sendJson(res, 202, out);
       } catch (err) {
-        return sendJson(res, 400, { ok: false, error: err.message });
+        const msg = err instanceof Error ? err.message : String(err);
+        sendJson(res, 400, { ok: false, error: msg });
       }
+      return;
     }
     if (suffix === '/history' && method === 'GET') {
-      const urlObj = new URL(req.url, 'http://x');
+      const urlObj = new URL(req.url || '/', 'http://x');
       const all = urlObj.searchParams.get('all') === '1';
       const turnsParam = parseInt(urlObj.searchParams.get('turns') || '50', 10);
       const turns = Number.isFinite(turnsParam) && turnsParam > 0 ? turnsParam : 50;
@@ -449,11 +473,12 @@ async function handleApi(req, res, url, method) {
       return;
     }
     if (suffix === '/files' && method === 'GET') {
-      return handleFilesList(req, res, rec);
+      handleFilesList(req, res, rec);
+      return;
     }
     if (suffix === '/trace' && method === 'GET') {
       try {
-        const data = await buildTrace(rec);
+        const data = await buildTrace(rec as never);
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Cache-Control': 'no-store',
@@ -461,84 +486,88 @@ async function handleApi(req, res, url, method) {
         res.end(JSON.stringify(data));
         return;
       } catch (err) {
-        return sendJson(res, 400, { ok: false, error: err.message });
+        const msg = err instanceof Error ? err.message : String(err);
+        sendJson(res, 400, { ok: false, error: msg });
+        return;
       }
     }
     if (suffix === '/files/raw' && (method === 'GET' || method === 'HEAD')) {
-      return handleFilesRaw(req, res, rec, method);
+      handleFilesRaw(req, res, rec, method);
+      return;
     }
     if (suffix === '/stream' && method === 'GET') {
-      return handleStream(req, res, id);
+      handleStream(req, res, id);
+      return;
     }
     if (suffix === '/terminals' && method === 'GET') {
-      return handleTerminalList(req, res, rec);
+      handleTerminalList(req, res, rec);
+      return;
     }
     {
       const tmatch = suffix.match(/^\/terminals\/([^/]+)(\/kill)?$/);
       if (tmatch) {
-        const tid = tmatch[1];
+        const tid = tmatch[1] || '';
         const kill = !!tmatch[2];
-        if (kill && method === 'POST')  return handleTerminalKill(req, res, rec, tid);
-        if (!kill && method === 'GET')  return handleTerminalRead(req, res, rec, tid);
+        if (kill && method === 'POST')  { handleTerminalKill(req, res, rec, tid); return; }
+        if (!kill && method === 'GET')  { handleTerminalRead(req, res, rec, tid); return; }
       }
     }
     {
       const bgmatch = suffix.match(/^\/bg-tasks\/([^/]+)$/);
       if (bgmatch && method === 'GET') {
-        return handleBgTaskRead(req, res, rec, bgmatch[1]);
+        handleBgTaskRead(req, res, rec, bgmatch[1] || '');
+        return;
       }
     }
     if (suffix === '/publish' && method === 'POST') {
-      // Wraps `grok share <sessionId>`. The agent must have a sessionId,
-      // either live (currently connected) or persisted from a prior run.
       const sessionId = rec.sessionId || rec.lastSessionId;
       if (!sessionId) {
-        return sendJson(res, 400, {
+        sendJson(res, 400, {
           ok: false,
           error: 'agent has no sessionId yet; complete at least one turn before publishing',
         });
+        return;
       }
       try {
-        // `grok share` uploads the session to xAI and prints the share URL on
-        // stdout. We give it a generous timeout because the upload size scales
-        // with conversation length.
         const stdout = await runGrokText(['share', sessionId], {
           timeoutMs: 60_000,
           maxBytes: 256 * 1024,
         });
-        // Pluck the first https:// URL out of stdout. We accept any host so
-        // future CLI versions that move to a different domain still work.
         const m = stdout.match(/https?:\/\/\S+/);
-        const url = m ? m[0].replace(/[)\].,;]+$/, '') : null;
-        if (!url) {
-          return sendJson(res, 500, {
+        const url2 = m ? m[0].replace(/[)\].,;]+$/, '') : null;
+        if (!url2) {
+          sendJson(res, 500, {
             ok: false,
             error: 'grok share did not print a URL',
             stdout: stdout.slice(-2000),
           });
+          return;
         }
-        return sendJson(res, 200, { ok: true, url, sessionId, stdout });
+        sendJson(res, 200, { ok: true, url: url2, sessionId, stdout });
       } catch (err) {
-        return sendJson(res, 500, errorToResponse(err));
+        sendJson(res, 500, errorToResponse(err));
       }
+      return;
     }
-    return sendJson(res, 404, { ok: false, error: 'not found' });
+    sendJson(res, 404, { ok: false, error: 'not found' });
+    return;
   }
 
-  return sendJson(res, 404, { ok: false, error: 'not found' });
+  sendJson(res, 404, { ok: false, error: 'not found' });
 }
 
-// Return the last `turns` turns from a JSONL history string. A "turn" starts
-// at each user_message event. If `all` is true the full history is returned.
-function sliceHistoryByTurns(raw, { all, turns }) {
+interface SliceHistoryOptions { all: boolean; turns: number }
+interface SliceHistoryResult { text: string; totalTurns: number; returnedTurns: number }
+
+function sliceHistoryByTurns(raw: string, { all, turns }: SliceHistoryOptions): SliceHistoryResult {
   if (!raw) return { text: '', totalTurns: 0, returnedTurns: 0 };
   const lines = raw.split('\n').filter(Boolean);
-  const userMessageIndices = [];
+  const userMessageIndices: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    // Cheap pre-check before JSON.parse on long lines.
-    if (lines[i].indexOf('"user_message"') === -1) continue;
+    const line = lines[i] || '';
+    if (line.indexOf('"user_message"') === -1) continue;
     try {
-      const obj = JSON.parse(lines[i]);
+      const obj = JSON.parse(line) as { event?: string };
       if (obj && obj.event === 'user_message') userMessageIndices.push(i);
     } catch { /* skip malformed */ }
   }
@@ -547,59 +576,72 @@ function sliceHistoryByTurns(raw, { all, turns }) {
     return { text: lines.join('\n') + (lines.length ? '\n' : ''), totalTurns, returnedTurns: totalTurns };
   }
   const cutoffLineIdx = userMessageIndices[totalTurns - turns];
+  if (cutoffLineIdx == null) {
+    return { text: lines.join('\n') + (lines.length ? '\n' : ''), totalTurns, returnedTurns: totalTurns };
+  }
   const sliced = lines.slice(cutoffLineIdx);
   return { text: sliced.join('\n') + '\n', totalTurns, returnedTurns: turns };
 }
 
 const FILE_MAX_BYTES = 256_000;
 
-function withinAgentScope(scopeDir, target) {
-  // Mirrors lib/fs-host.js: allow exact scope match or descendant.
+function withinAgentScope(scopeDir: string, target: string): boolean {
   const scope = path.resolve(scopeDir);
   const resolved = path.resolve(target);
   return resolved === scope || resolved.startsWith(scope + path.sep);
 }
 
-async function handleFilesList(req, res, rec) {
-  const cwd = rec && rec.cwd;
-  if (!cwd) return sendJson(res, 404, { ok: false, error: 'agent cwd missing' });
+function _req(req: IncomingMessage): IncomingMessage { return req; }
 
-  const urlObj = new URL(req.url, 'http://x');
+function handleFilesList(req: IncomingMessage, res: ServerResponse, rec: PublicAgent): void {
+  const cwd = rec && rec.cwd;
+  if (!cwd) { sendJson(res, 404, { ok: false, error: 'agent cwd missing' }); return; }
+
+  const urlObj = new URL(req.url || '/', 'http://x');
   const rel = urlObj.searchParams.get('path') || '';
   const cleanRel = String(rel).replace(/^\/+/, '');
 
-  let target;
+  let target: string;
   try {
     target = path.resolve(cwd, cleanRel);
   } catch {
-    return sendJson(res, 400, { ok: false, error: 'invalid path' });
+    sendJson(res, 400, { ok: false, error: 'invalid path' });
+    return;
   }
   if (!withinAgentScope(cwd, target)) {
-    return sendJson(res, 400, { ok: false, error: 'path escapes agent scope' });
+    sendJson(res, 400, { ok: false, error: 'path escapes agent scope' });
+    return;
   }
 
-  let stat;
+  let stat: fs.Stats;
   try {
     stat = fs.statSync(target);
   } catch (err) {
-    if (err && err.code === 'ENOENT') {
-      return sendJson(res, 404, { ok: false, error: 'path not found' });
+    if (isNodeErr(err) && err.code === 'ENOENT') {
+      sendJson(res, 404, { ok: false, error: 'path not found' });
+      return;
     }
-    return sendJson(res, 500, { ok: false, error: err.message });
+    const msg = err instanceof Error ? err.message : String(err);
+    sendJson(res, 500, { ok: false, error: msg });
+    return;
   }
 
   if (stat.isDirectory()) {
-    let names;
+    let names: string[];
     try {
       names = fs.readdirSync(target);
     } catch (err) {
-      return sendJson(res, 500, { ok: false, error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 500, { ok: false, error: msg });
+      return;
     }
-    const dirs = [];
-    const files = [];
+    interface DirEntry { name: string; type: 'directory'; entries: null; isHidden: boolean }
+    interface FileEntry { name: string; type: 'file'; size: number; mtime: string; isHidden: boolean }
+    const dirs: DirEntry[] = [];
+    const files: FileEntry[] = [];
     for (const name of names) {
       const full = path.join(target, name);
-      let s;
+      let s: fs.Stats;
       try { s = fs.lstatSync(full); }
       catch { continue; }
       const isHidden = name.startsWith('.');
@@ -614,7 +656,6 @@ async function handleFilesList(req, res, rec) {
           isHidden,
         });
       } else {
-        // symlinks/other: report as file-ish
         files.push({
           name,
           type: 'file',
@@ -624,22 +665,23 @@ async function handleFilesList(req, res, rec) {
         });
       }
     }
-    const cmp = (a, b) => {
+    const cmp = <T extends { isHidden: boolean; name: string }>(a: T, b: T): number => {
       if (a.isHidden !== b.isHidden) return a.isHidden ? 1 : -1;
       return a.name.localeCompare(b.name);
     };
     dirs.sort(cmp);
     files.sort(cmp);
-    return sendJson(res, 200, {
+    sendJson(res, 200, {
       type: 'directory',
       path: cleanRel,
       entries: [...dirs, ...files],
     });
+    return;
   }
 
   if (stat.isFile()) {
     if (stat.size > FILE_MAX_BYTES) {
-      return sendJson(res, 200, {
+      sendJson(res, 200, {
         type: 'file',
         path: cleanRel,
         size: stat.size,
@@ -647,12 +689,15 @@ async function handleFilesList(req, res, rec) {
         content: null,
         reason: 'too_large',
       });
+      return;
     }
-    let buf;
+    let buf: Buffer;
     try {
       buf = fs.readFileSync(target);
     } catch (err) {
-      return sendJson(res, 500, { ok: false, error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 500, { ok: false, error: msg });
+      return;
     }
     const sniff = buf.subarray(0, Math.min(512, buf.length));
     let binary = false;
@@ -660,15 +705,16 @@ async function handleFilesList(req, res, rec) {
       if (sniff[i] === 0) { binary = true; break; }
     }
     if (binary) {
-      return sendJson(res, 200, {
+      sendJson(res, 200, {
         type: 'file',
         path: cleanRel,
         size: stat.size,
         binary: true,
         content: null,
       });
+      return;
     }
-    return sendJson(res, 200, {
+    sendJson(res, 200, {
       type: 'file',
       path: cleanRel,
       size: stat.size,
@@ -676,14 +722,15 @@ async function handleFilesList(req, res, rec) {
       mtime: stat.mtime.toISOString(),
       content: buf.toString('utf8'),
     });
+    return;
   }
 
-  return sendJson(res, 400, { ok: false, error: 'unsupported file type' });
+  sendJson(res, 400, { ok: false, error: 'unsupported file type' });
 }
 
-const RAW_MAX_BYTES = 200 * 1024 * 1024; // 200 MB
+const RAW_MAX_BYTES = 200 * 1024 * 1024;
 
-const RAW_MIME = {
+const RAW_MIME: Record<string, string> = {
   '.png':  'image/png',
   '.jpg':  'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -708,19 +755,18 @@ const RAW_MIME = {
   '.json': 'application/json; charset=utf-8',
 };
 
-function parseRange(headerVal, size) {
-  // Returns { start, end } (inclusive) or null if absent;
-  // returns { unsatisfiable: true } if malformed/out-of-range.
+type RangeParsed = { start: number; end: number } | { unsatisfiable: true } | null;
+
+function parseRange(headerVal: string | undefined, size: number): RangeParsed {
   if (!headerVal || typeof headerVal !== 'string') return null;
   const m = /^bytes=(\d*)-(\d*)$/.exec(headerVal.trim());
   if (!m) return { unsatisfiable: true };
-  const startStr = m[1];
-  const endStr = m[2];
-  let start;
-  let end;
+  const startStr = m[1] || '';
+  const endStr = m[2] || '';
+  let start: number;
+  let end: number;
   if (startStr === '' && endStr === '') return { unsatisfiable: true };
   if (startStr === '') {
-    // suffix: last N bytes
     const n = parseInt(endStr, 10);
     if (!Number.isFinite(n) || n <= 0) return { unsatisfiable: true };
     start = Math.max(0, size - n);
@@ -734,39 +780,46 @@ function parseRange(headerVal, size) {
   return { start, end };
 }
 
-function handleFilesRaw(req, res, rec, method) {
+function handleFilesRaw(req: IncomingMessage, res: ServerResponse, rec: PublicAgent, method: string): void {
   const cwd = rec && rec.cwd;
-  if (!cwd) return sendJson(res, 404, { ok: false, error: 'agent cwd missing' });
+  if (!cwd) { sendJson(res, 404, { ok: false, error: 'agent cwd missing' }); return; }
 
-  const urlObj = new URL(req.url, 'http://x');
+  const urlObj = new URL(req.url || '/', 'http://x');
   const rel = urlObj.searchParams.get('path') || '';
   const cleanRel = String(rel).replace(/^\/+/, '');
 
-  let target;
+  let target: string;
   try {
     target = path.resolve(cwd, cleanRel);
   } catch {
-    return sendJson(res, 400, { ok: false, error: 'invalid path' });
+    sendJson(res, 400, { ok: false, error: 'invalid path' });
+    return;
   }
   if (!withinAgentScope(cwd, target)) {
-    return sendJson(res, 400, { ok: false, error: 'path escapes agent scope' });
+    sendJson(res, 400, { ok: false, error: 'path escapes agent scope' });
+    return;
   }
 
-  let stat;
+  let stat: fs.Stats;
   try {
     stat = fs.statSync(target);
   } catch (err) {
-    if (err && err.code === 'ENOENT') {
-      return sendJson(res, 404, { ok: false, error: 'path not found' });
+    if (isNodeErr(err) && err.code === 'ENOENT') {
+      sendJson(res, 404, { ok: false, error: 'path not found' });
+      return;
     }
-    return sendJson(res, 500, { ok: false, error: err.message });
+    const msg = err instanceof Error ? err.message : String(err);
+    sendJson(res, 500, { ok: false, error: msg });
+    return;
   }
 
   if (stat.isDirectory()) {
-    return sendJson(res, 400, { ok: false, error: 'path is a directory' });
+    sendJson(res, 400, { ok: false, error: 'path is a directory' });
+    return;
   }
   if (!stat.isFile()) {
-    return sendJson(res, 400, { ok: false, error: 'unsupported file type' });
+    sendJson(res, 400, { ok: false, error: 'unsupported file type' });
+    return;
   }
   if (stat.size > RAW_MAX_BYTES) {
     res.writeHead(413, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -778,9 +831,9 @@ function handleFilesRaw(req, res, rec, method) {
   const contentType = RAW_MIME[ext] || 'application/octet-stream';
   const lastModified = stat.mtime.toUTCString();
 
-  const rangeHeader = req.headers['range'];
+  const rangeHeader = req.headers['range'] as string | undefined;
   const parsed = parseRange(rangeHeader, stat.size);
-  if (parsed && parsed.unsatisfiable) {
+  if (parsed && 'unsatisfiable' in parsed) {
     res.writeHead(416, {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Range': `bytes */${stat.size}`,
@@ -820,15 +873,23 @@ function handleFilesRaw(req, res, rec, method) {
   stream.pipe(res);
 }
 
-function handleGlobalBgTerminals(req, res) {
-  // Aggregate every live bg shell across every agent so the topbar pill +
-  // global viewer can show long-running processes (e.g. `npm run dev`)
-  // without the user having to remember which conversation owns them.
-  //
-  // Two sources, merged:
-  //   1. acp-client.terminalHost._terminals (ACP terminal/create RPC path)
-  //   2. agent record.bgTasks (grok-specific _x.ai/task_backgrounded path)
-  const out = [];
+interface MergedTerminal {
+  id: string;
+  source: 'acp' | 'grok' | 'merged';
+  command: string;
+  cwd: string;
+  exited: boolean;
+  exitStatus: { exitCode: number | null; signal: string | NodeJS.Signals | null } | null;
+  bytes?: number;
+  truncated?: boolean;
+  outputFile: string | null;
+  startedAt: number | null;
+  endedAt: number | null;
+  url?: string;
+}
+
+function handleGlobalBgTerminals(_req2: IncomingMessage, res: ServerResponse): void {
+  const out: { agentId: string; agentName: string; terminals: MergedTerminal[] }[] = [];
   let runningTotal = 0;
   for (const rec of manager.list()) {
     const a = manager.getRaw(rec.id);
@@ -838,16 +899,11 @@ function handleGlobalBgTerminals(req, res) {
       out.push({ agentId: rec.id, agentName: rec.name || rec.id, terminals: merged });
     }
   }
-  return sendJson(res, 200, { ok: true, runningCount: runningTotal, agents: out });
+  sendJson(res, 200, { ok: true, runningCount: runningTotal, agents: out });
 }
 
-// Merge ACP terminal host entries with grok bgTasks for a single agent.
-// The agent uses both paths for the same physical process (it calls our
-// ACP terminal/create which assigns the id, then emits task_backgrounded
-// with the same id). Dedup by id and merge fields so each shell shows up
-// once per agent. Sort newest-first by start time.
-function mergeBgSources(a) {
-  const byId = new Map();
+function mergeBgSources(a: ReturnType<typeof manager.getRaw>): MergedTerminal[] {
+  const byId = new Map<string, MergedTerminal>();
   const host = a && a.client && a.client.terminalHost;
   if (host && host._terminals) {
     for (const t of host._terminals.values()) {
@@ -873,16 +929,12 @@ function mergeBgSources(a) {
         : null;
       const existing = byId.get(t.id);
       if (existing) {
-        // Same physical process. Prefer the agent's unwrapped command for
-        // readability ("npm run dev" vs "/bin/bash -lc 'npm run dev'").
         existing.source = 'merged';
         existing.command = t.command || existing.command;
         existing.cwd = t.cwd || existing.cwd;
         existing.outputFile = t.output_file || existing.outputFile;
         existing.startedAt = t.startedAt || existing.startedAt;
         existing.endedAt = t.endedAt || existing.endedAt;
-        // If either source says exited, treat as exited. Prefer ACP exit
-        // status when present since it has real OS exitCode/signal data.
         if (t.completed && !existing.exited) existing.exited = true;
         if (!existing.exitStatus && grokStatus) existing.exitStatus = grokStatus;
       } else {
@@ -900,10 +952,6 @@ function mergeBgSources(a) {
       }
     }
   }
-  // Annotate with a detected local URL when the command looks like a dev
-  // server (and either the captured output or the cmdline gives us a port).
-  // ACP terminals carry their buffer in-memory; grok bg tasks have an
-  // output_file on disk we can tail.
   for (const t of byId.values()) {
     if (!t.url) {
       let output = '';
@@ -919,22 +967,20 @@ function mergeBgSources(a) {
           if (buf) output = buf.toString('utf8');
         } catch { /* ignore */ }
       }
-      // Grok occasionally cleans up the on-disk log between turns; fall back
-      // to the cached TaskOutput snapshot the manager grabbed off the stream.
       if (!output && (t.source === 'grok' || t.source === 'merged')) {
         const bg = a && a.bgTasks && a.bgTasks.get(t.id);
         if (bg && typeof bg.cached_output === 'string' && bg.cached_output.length) {
           output = bg.cached_output;
         }
       }
-      const url = inferDevServerUrl(t.command, output);
-      if (url) t.url = url;
+      const url2 = inferDevServerUrl(t.command, output);
+      if (url2) t.url = url2;
     }
   }
   return [...byId.values()].sort((x, y) => (y.startedAt || 0) - (x.startedAt || 0));
 }
 
-function readFileTail(filePath, n) {
+function readFileTail(filePath: string, n: number): Buffer | null {
   try {
     const st = fs.statSync(filePath);
     const size = st.size;
@@ -947,18 +993,18 @@ function readFileTail(filePath, n) {
   } catch { return null; }
 }
 
-function handleTerminalList(req, res, rec) {
+function handleTerminalList(_req2: IncomingMessage, res: ServerResponse, rec: PublicAgent): void {
   const a = manager.getRaw(rec.id);
-  return sendJson(res, 200, { ok: true, terminals: mergeBgSources(a) });
+  sendJson(res, 200, { ok: true, terminals: mergeBgSources(a) });
 }
 
-function handleTerminalRead(req, res, rec, tid) {
+function handleTerminalRead(req: IncomingMessage, res: ServerResponse, rec: PublicAgent, tid: string): void {
   const a = manager.getRaw(rec.id);
   const host = a && a.client && a.client.terminalHost;
   const t = host && host._terminals && host._terminals.get(tid);
   if (t) {
     const output = t.buffer ? t.buffer.toString('utf8') : '';
-    return sendJson(res, 200, {
+    sendJson(res, 200, {
       ok: true,
       id: t.id,
       source: 'acp',
@@ -970,18 +1016,15 @@ function handleTerminalRead(req, res, rec, tid) {
       output,
       url: inferDevServerUrl(t.command, output),
     });
+    return;
   }
-  // Fall through to grok bg tasks (they have an output_file we tail).
-  return handleBgTaskRead(req, res, rec, tid);
+  handleBgTaskRead(req, res, rec, tid);
 }
 
-function handleBgTaskRead(req, res, rec, tid) {
-  // Read a grok-backgrounded task: status + tail of its log file. The agent
-  // emits the log path in the original `_x.ai/task_backgrounded` event so
-  // we can read it directly.
+function handleBgTaskRead(_req2: IncomingMessage, res: ServerResponse, rec: PublicAgent, tid: string): void {
   const a = manager.getRaw(rec.id);
   const t = a && a.bgTasks && a.bgTasks.get(tid);
-  if (!t) return sendJson(res, 404, { ok: false, error: 'bg task not found' });
+  if (!t) { sendJson(res, 404, { ok: false, error: 'bg task not found' }); return; }
   const TAIL_BYTES = 64 * 1024;
   let output = '';
   let truncated = false;
@@ -1000,18 +1043,17 @@ function handleBgTaskRead(req, res, rec, tid) {
         output = fs.readFileSync(t.output_file, 'utf8');
       }
     } catch (err) {
-      // Grok may have rotated or deleted the log; fall back to the snapshot
-      // the manager cached off the in-stream TaskOutput notifications.
       if (typeof t.cached_output === 'string' && t.cached_output.length) {
         output = t.cached_output;
       } else {
-        output = `[grok-remote] failed to read log: ${err.message}`;
+        const msg = err instanceof Error ? err.message : String(err);
+        output = `[grok-remote] failed to read log: ${msg}`;
       }
     }
   } else if (typeof t.cached_output === 'string' && t.cached_output.length) {
     output = t.cached_output;
   }
-  return sendJson(res, 200, {
+  sendJson(res, 200, {
     ok: true,
     id: t.id,
     source: 'grok',
@@ -1028,61 +1070,51 @@ function handleBgTaskRead(req, res, rec, tid) {
   });
 }
 
-function handleTerminalKill(req, res, rec, tid) {
+function handleTerminalKill(_req2: IncomingMessage, res: ServerResponse, rec: PublicAgent, tid: string): void {
   const a = manager.getRaw(rec.id);
-  // First try the ACP terminal host (our own spawn).
   const host = a && a.client && a.client.terminalHost;
   const t = host && host._terminals && host._terminals.get(tid);
   if (t) {
     try {
       if (t.proc && !t.exited) t.proc.kill('SIGTERM');
     } catch { /* ignore */ }
-    return sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true });
+    return;
   }
-  // Otherwise: grok-owned bg task. We don't have the PID directly, so we
-  // pkill -f over the task's cwd substring (matches both the npm wrapper
-  // and any spawned child like vite). Mark the record completed so the UI
-  // reflects the kill on the next poll even before the task_completed
-  // notification arrives from the agent.
   const bg = a && a.bgTasks && a.bgTasks.get(tid);
-  if (!bg) return sendJson(res, 404, { ok: false, error: 'terminal not found' });
-  if (bg.completed) return sendJson(res, 200, { ok: true, alreadyExited: true });
+  if (!bg) { sendJson(res, 404, { ok: false, error: 'terminal not found' }); return; }
+  if (bg.completed) { sendJson(res, 200, { ok: true, alreadyExited: true }); return; }
   const cwd = bg.cwd || '';
-  if (!cwd) return sendJson(res, 500, { ok: false, error: 'task has no cwd; cannot derive kill pattern' });
+  if (!cwd) { sendJson(res, 500, { ok: false, error: 'task has no cwd; cannot derive kill pattern' }); return; }
   try {
     spawnSync('/usr/bin/pkill', ['-TERM', '-f', cwd], { timeout: 4000 });
   } catch (err) {
-    return sendJson(res, 500, { ok: false, error: `pkill failed: ${err.message}` });
+    const msg = err instanceof Error ? err.message : String(err);
+    sendJson(res, 500, { ok: false, error: `pkill failed: ${msg}` });
+    return;
   }
-  // Optimistically mark the task completed; if the agent later emits
-  // task_completed it'll update the exit_code/signal fields.
   bg.completed = true;
   bg.signal    = bg.signal || 'killed-by-user';
   bg.endedAt   = Date.now();
   try { manager.emit('list_changed', { event: 'bg_tasks', id: rec.id, count: 0 }); } catch { /* ignore */ }
-  return sendJson(res, 200, { ok: true, source: 'grok', killed: true });
+  sendJson(res, 200, { ok: true, source: 'grok', killed: true });
 }
 
-function handleVersionUpdateStream(req, res) {
-  // POST /api/version/update returns an SSE stream of { step, status, detail }
-  // events. The final restart step triggers pm2 to SIGTERM us; the connection
-  // dies mid-flight and the frontend polls /api/health to detect recovery.
+function handleVersionUpdateStream(req: IncomingMessage, res: ServerResponse): void {
   sseHeaders(res);
   let counter = 0;
-  const send = (data) => {
+  const send = (data: UpdateStepEvent): void => {
     sseWrite(res, {
       id: `vupd-${Date.now()}-${++counter}`,
       event: 'update',
       data,
     });
   };
-  // Initial hello so the client sees the channel is live before the first
-  // step lands (preflight can take a moment if git is slow).
   send({ step: 'open', status: 'ok', detail: 'connected' });
 
   const heartbeat = setInterval(() => ssePing(res), 5000);
   let closed = false;
-  const cleanup = () => {
+  const cleanup = (): void => {
     if (closed) return;
     closed = true;
     clearInterval(heartbeat);
@@ -1092,30 +1124,30 @@ function handleVersionUpdateStream(req, res) {
   req.on('error', cleanup);
 
   runVersionUpdate({
-    emit: (ev) => { if (!closed) send(ev); },
+    emit: (ev: UpdateStepEvent) => { if (!closed) send(ev); },
   }).then(() => {
     if (!closed) {
       send({ step: 'done', status: 'ok', detail: 'all steps completed' });
       cleanup();
     }
-  }).catch((err) => {
+  }).catch((err: unknown) => {
     if (!closed) {
-      send({ step: 'done', status: 'fail', detail: err && err.message || String(err) });
+      const msg = err instanceof Error ? err.message : String(err);
+      send({ step: 'done', status: 'fail', detail: msg });
       cleanup();
     }
   });
 }
 
-function handleAgentsStream(req, res) {
+function handleAgentsStream(req: IncomingMessage, res: ServerResponse): void {
   sseHeaders(res);
   let counter = 0;
-  // Initial snapshot so the consumer doesn't need a separate GET first.
   sseWrite(res, {
     id: `agents-${Date.now()}-${++counter}`,
     event: 'agents_snapshot',
     data: { agents: manager.list() },
   });
-  const onChange = (payload) => {
+  const onChange = (payload: { event?: string; [k: string]: unknown }): void => {
     sseWrite(res, {
       id: `agents-${Date.now()}-${++counter}`,
       event: payload.event || 'agents_changed',
@@ -1124,7 +1156,7 @@ function handleAgentsStream(req, res) {
   };
   manager.on('list_changed', onChange);
   const heartbeat = setInterval(() => ssePing(res), 15000);
-  const cleanup = () => {
+  const cleanup = (): void => {
     clearInterval(heartbeat);
     try { manager.off('list_changed', onChange); } catch { /* ignore */ }
     if (!res.writableEnded) try { res.end(); } catch { /* ignore */ }
@@ -1133,12 +1165,12 @@ function handleAgentsStream(req, res) {
   req.on('error', cleanup);
 }
 
-function handleStream(req, res, id) {
+function handleStream(req: IncomingMessage, res: ServerResponse, id: string): void {
   const ring = manager.ring(id);
-  if (!ring) return sendJson(res, 404, { ok: false, error: 'agent not found' });
+  if (!ring) { sendJson(res, 404, { ok: false, error: 'agent not found' }); return; }
 
   sseHeaders(res);
-  const lastId = req.headers['last-event-id'];
+  const lastId = req.headers['last-event-id'] as string | undefined;
   for (const ev of ring.since(lastId)) {
     sseWrite(res, ev);
   }
@@ -1146,7 +1178,7 @@ function handleStream(req, res, id) {
   const unsub = manager.subscribe(id, (ev) => sseWrite(res, ev));
   const heartbeat = setInterval(() => ssePing(res), 15000);
 
-  const cleanup = () => {
+  const cleanup = (): void => {
     clearInterval(heartbeat);
     try { unsub(); } catch { /* ignore */ }
     if (!res.writableEnded) try { res.end(); } catch { /* ignore */ }
@@ -1156,13 +1188,16 @@ function handleStream(req, res, id) {
   req.on('error', cleanup);
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = (req.url || '').split('?')[0];
+const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  const url = (req.url || '').split('?')[0] || '/';
   if (url.startsWith('/api/system/')) {
     try {
       await handleSystem(req, res, url);
     } catch (err) {
-      if (!res.headersSent) sendJson(res, 500, { ok: false, error: err.message });
+      if (!res.headersSent) {
+        const msg = err instanceof Error ? err.message : String(err);
+        sendJson(res, 500, { ok: false, error: msg });
+      }
     }
     return;
   }
@@ -1170,14 +1205,17 @@ const server = http.createServer(async (req, res) => {
     try {
       await handleApi(req, res, url, req.method || 'GET');
     } catch (err) {
-      if (!res.headersSent) sendJson(res, 500, { ok: false, error: err.message });
+      if (!res.headersSent) {
+        const msg = err instanceof Error ? err.message : String(err);
+        sendJson(res, 500, { ok: false, error: msg });
+      }
     }
     return;
   }
   serveStatic(req, res);
 });
 
-const retention = startRetentionTimer({ getSettings: loadSettings, manager });
+const retention = startRetentionTimer({ getSettings: loadSettings, manager: manager as never });
 
 server.listen(PORT, HOST, () => {
   const ts = tailscaleIdentity();
@@ -1186,20 +1224,21 @@ server.listen(PORT, HOST, () => {
   console.log(`[grok-remote] tailnet url: ${where}`);
 });
 
-for (const sig of ['SIGINT', 'SIGTERM']) {
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
     try { retention.stop(); } catch { /* ignore */ }
   });
 }
 
 let shuttingDown = false;
-async function shutdown(signal) {
+async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[grok-remote] shutdown on ${signal}`);
   try { await manager.shutdownAll(); } catch { /* ignore */ }
   server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 3000).unref?.();
+  const t = setTimeout(() => process.exit(0), 3000);
+  t.unref?.();
 }
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
