@@ -1,49 +1,53 @@
 // Pure-ish DOM helpers + markdown-light renderers.
 // No external libraries. All functions return DOM nodes or strings.
 
-export function el(tag, attrs, ...children) {
+type ElChild = Node | string | number | boolean | null | undefined | ElChild[];
+type ElAttrs = Record<string, unknown> | null;
+
+export function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  attrs?: ElAttrs,
+  ...children: ElChild[]
+): HTMLElementTagNameMap[K];
+export function el(tag: string, attrs?: ElAttrs, ...children: ElChild[]): HTMLElement;
+export function el(tag: string, attrs?: ElAttrs, ...children: ElChild[]): HTMLElement {
   const node = document.createElement(tag);
   if (attrs) {
     for (const [k, v] of Object.entries(attrs)) {
       if (v == null || v === false) continue;
-      if (k === 'class')      node.className = v;
-      else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v);
-      else if (k === 'dataset' && typeof v === 'object') Object.assign(node.dataset, v);
-      else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v);
-      else if (k === 'html')  node.innerHTML = v;
-      else node.setAttribute(k, v);
+      if (k === 'class')      node.className = String(v);
+      else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v as object);
+      else if (k === 'dataset' && typeof v === 'object') Object.assign(node.dataset, v as object);
+      else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v as EventListener);
+      else if (k === 'html')  node.innerHTML = String(v);
+      else node.setAttribute(k, String(v));
     }
   }
   for (const c of children) appendChild(node, c);
   return node;
 }
 
-function appendChild(parent, c) {
+function appendChild(parent: Node, c: ElChild): void {
   if (c == null || c === false) return;
   if (Array.isArray(c)) { for (const x of c) appendChild(parent, x); return; }
   if (c instanceof Node) { parent.appendChild(c); return; }
   parent.appendChild(document.createTextNode(String(c)));
 }
 
-export function escapeHtml(s) {
+export function escapeHtml(s: unknown): string {
   return String(s).replace(/[&<>"]/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
-  }[c]));
+  }[c] as string));
 }
 
-// Minimal markdown-light rendering.
-// Supports: fenced code blocks (```), inline code (`), bold (**...**),
-// and preserves newlines. Everything else is escaped.
-export function renderMarkdownLight(text) {
+export function renderMarkdownLight(text: string): HTMLElement {
   if (!text) return el('span');
   const container = el('div', { class: 'md' });
   const segments = String(text).split(/(```[\s\S]*?```)/g);
   for (const seg of segments) {
     if (!seg) continue;
     if (seg.startsWith('```') && seg.endsWith('```') && seg.length >= 6) {
-      // fenced code block
       const inner = seg.slice(3, -3);
-      // optional language prefix
       const nl = inner.indexOf('\n');
       let lang = '', code = inner;
       if (nl >= 0 && /^[a-zA-Z0-9_-]*$/.test(inner.slice(0, nl))) {
@@ -63,34 +67,50 @@ export function renderMarkdownLight(text) {
   return container;
 }
 
-function inlineMd(s) {
-  // 1) escape HTML first
+function inlineMd(s: string): string {
   let out = escapeHtml(s);
-  // 2) inline code (`...`)
   out = out.replace(/`([^`\n]+)`/g, (_m, g1) => `<code class="md-inline-code">${g1}</code>`);
-  // 3) bold (**...**)
   out = out.replace(/\*\*([^*\n]+)\*\*/g, (_m, g1) => `<strong>${g1}</strong>`);
-  // 4) preserve newlines
   out = out.replace(/\n/g, '<br/>');
   return out;
 }
 
-// ── Conversation blocks ────────────────────────────────────────────────
-
-function fmtClock(d) {
-  // HH:MM in the user's locale, 24h. Empty when d isn't a valid date.
+function fmtClock(d: Date): string {
   if (!(d instanceof Date) || isNaN(d.getTime())) return '';
   const h = String(d.getHours()).padStart(2, '0');
   const m = String(d.getMinutes()).padStart(2, '0');
   return `${h}:${m}`;
 }
 
-function basename(p) {
+function basename(p: unknown): string {
   return String(p || '').split(/[\\/]/).filter(Boolean).pop() || '';
 }
 
-export function userAttachmentThumbnails(attachments = [], { agentId } = {}) {
-  const out = [];
+export interface Attachment {
+  mimeType?: string;
+  dataUrl?: string;
+  dataBase64?: string;
+  rel?: string;
+  name?: string;
+  size?: number | null;
+}
+
+export interface AttachmentThumb {
+  name: string;
+  mimeType: string;
+  size: number | null;
+  src: string;
+}
+
+export interface UserAttachmentOpts {
+  agentId?: string;
+}
+
+export function userAttachmentThumbnails(
+  attachments: Attachment[] = [],
+  { agentId }: UserAttachmentOpts = {},
+): AttachmentThumb[] {
+  const out: AttachmentThumb[] = [];
   for (const att of attachments || []) {
     if (!att || typeof att !== 'object') continue;
     const mimeType = String(att.mimeType || '');
@@ -116,14 +136,14 @@ export function userAttachmentThumbnails(attachments = [], { agentId } = {}) {
   return out;
 }
 
-function looksLikeGeneratedAttachmentBlock(text) {
+function looksLikeGeneratedAttachmentBlock(text: string): boolean {
   const lines = String(text || '').split('\n');
   if (lines[0] !== 'Attached files:') return false;
   const fileLines = lines.slice(1).filter(Boolean);
   return fileLines.length > 0 && fileLines.every(line => /^- .+ \([^,]+, .+\)$/.test(line));
 }
 
-export function stripGeneratedAttachmentBlock(text, attachments = []) {
+export function stripGeneratedAttachmentBlock(text: string, attachments: Attachment[] = []): string {
   const s = String(text || '');
   if (!attachments || !attachments.length || !s) return s;
 
@@ -139,7 +159,7 @@ export function stripGeneratedAttachmentBlock(text, attachments = []) {
   return s;
 }
 
-function renderUserAttachments(attachments, agentId) {
+function renderUserAttachments(attachments: Attachment[] | undefined, agentId: string | undefined): HTMLElement | null {
   const thumbs = userAttachmentThumbnails(attachments, { agentId });
   if (!thumbs.length) return null;
   return el('div', { class: 'msg-attachments' }, thumbs.map((att) =>
@@ -149,15 +169,11 @@ function renderUserAttachments(attachments, agentId) {
       target: '_blank',
       rel: 'noopener noreferrer',
       title: att.name,
-      onclick: (ev) => {
-        // Intercept left-click to open the lightbox. Cmd/Ctrl/middle-click
-        // and right-click "Open in new tab" still navigate via the href.
+      onclick: (ev: MouseEvent) => {
         if (ev.button !== 0) return;
         if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
         ev.preventDefault();
-        // Lazy import so the chat hot-path bundle doesn't pull in lightbox
-        // chrome until the first click actually happens.
-        import('./image-lightbox').then((m) => m.openImageLightbox(att.src, att.name));
+        void import('./image-lightbox.js').then((m) => m.openImageLightbox(att.src, att.name));
       },
     },
       el('img', {
@@ -171,7 +187,12 @@ function renderUserAttachments(attachments, agentId) {
   ));
 }
 
-export function renderUserBubble(text, ts, opts = {}) {
+export interface UserBubbleOpts {
+  attachments?: Attachment[];
+  agentId?: string;
+}
+
+export function renderUserBubble(text: string, ts?: number | string | Date, opts: UserBubbleOpts = {}): HTMLElement {
   const when = ts ? new Date(ts) : new Date();
   const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
   const visibleText = stripGeneratedAttachmentBlock(text, attachments);
@@ -190,7 +211,14 @@ export function renderUserBubble(text, ts, opts = {}) {
   );
 }
 
-export function renderAssistantBubble(ts) {
+export interface AssistantBubble {
+  node: HTMLElement;
+  append(text: string): void;
+  text(): string;
+  finalize(): void;
+}
+
+export function renderAssistantBubble(ts?: number | string | Date): AssistantBubble {
   const when = ts ? new Date(ts) : new Date();
   const body = el('div', { class: 'msg-body' });
   const timeEl = el('span', { class: 'msg-time', title: when.toISOString() }, fmtClock(when));
@@ -204,15 +232,13 @@ export function renderAssistantBubble(ts) {
   let buf = '';
   return {
     node,
-    append(text) {
+    append(text: string): void {
       buf += text;
       body.replaceChildren(renderMarkdownLight(buf));
     },
-    text() { return buf; },
-    finalize() {
+    text(): string { return buf; },
+    finalize(): void {
       node.classList.add('msg--done');
-      // Snap timestamp to when the turn actually finished if it didn't get
-      // updated mid-stream.
       const now = new Date();
       timeEl.textContent = fmtClock(now);
       timeEl.title = now.toISOString();
@@ -220,7 +246,15 @@ export function renderAssistantBubble(ts) {
   };
 }
 
-export function renderThinkingPane() {
+export interface ThinkingPane {
+  node: HTMLElement;
+  append(text: string): void;
+  finalize(): void;
+  text(): string;
+  isActive(): boolean;
+}
+
+export function renderThinkingPane(): ThinkingPane {
   const dots = el('span', { class: 'thinking-dots' }, '...');
   const summary = el('summary', { class: 'thinking-summary' },
     el('span', { class: 'thinking-label' }, 'thinking'),
@@ -232,21 +266,23 @@ export function renderThinkingPane() {
   let active = true;
   return {
     node: details,
-    append(text) {
+    append(text: string): void {
       buf += text;
       body.textContent = buf;
     },
-    finalize() {
+    finalize(): void {
       active = false;
       dots.textContent = '';
       summary.classList.add('thinking-summary--done');
     },
-    text() { return buf; },
-    isActive() { return active; },
+    text(): string { return buf; },
+    isActive(): boolean { return active; },
   };
 }
 
-const STATUS_STYLES = {
+interface StatusStyle { cls: string; label: string }
+
+const STATUS_STYLES: Record<string, StatusStyle> = {
   Pending:   { cls: 'tool-status--pending',   label: 'pending'   },
   Running:   { cls: 'tool-status--running',   label: 'running'   },
   Completed: { cls: 'tool-status--completed', label: 'completed' },
@@ -254,10 +290,7 @@ const STATUS_STYLES = {
   Canceled:  { cls: 'tool-status--canceled',  label: 'canceled'  },
 };
 
-// ACP status values arrive either capitalized (legacy "Pending"/"Running"/...)
-// or lowercase + snake_case ("pending", "in_progress", "completed", "failed",
-// "canceled"). Normalize so the rest of the UI can look up STATUS_STYLES.
-function normalizeStatus(s) {
+function normalizeStatus(s: unknown): string | null {
   if (!s) return null;
   const k = String(s).trim().toLowerCase();
   switch (k) {
@@ -277,13 +310,25 @@ function normalizeStatus(s) {
   }
 }
 
-function readStatus(payload) {
+interface ToolPayload {
+  toolCallId?: string;
+  kind?: string;
+  title?: string;
+  status?: string;
+  rawInput?: Record<string, unknown> & { variant?: string; command?: string; cmd?: string; todos?: unknown[]; merge?: boolean };
+  rawOutput?: unknown;
+  content?: unknown;
+  _meta?: { updateParams?: { status?: string } };
+  [k: string]: unknown;
+}
+
+function readStatus(payload: ToolPayload | null | undefined): string | null {
   if (!payload) return null;
   const meta = payload._meta && payload._meta.updateParams && payload._meta.updateParams.status;
   return normalizeStatus(meta) || normalizeStatus(payload.status) || null;
 }
 
-function fmtDur(ms) {
+function fmtDur(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return '';
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
@@ -292,30 +337,34 @@ function fmtDur(ms) {
   return `${m}m${s ? ` ${s}s` : ''}`;
 }
 
-function inferToolTitle(update) {
+function inferToolTitle(update: ToolPayload): string {
   const title = update.title;
   const cmd = update.rawInput && (update.rawInput.command || update.rawInput.cmd);
-  if (cmd) return cmd;
+  if (cmd) return String(cmd);
   if (title) return title;
   if (update.kind) return update.kind;
   return 'tool call';
 }
 
-// Identify TodoWrite tool calls regardless of which event slot they
-// arrive on (initial tool_call, tool_call_update). grok sends
-// rawInput.variant === 'TodoWrite' for both the initial full list
-// (merge=false) and subsequent in-progress patches (merge=true).
-export function isTodoWriteToolCall(data) {
+export function isTodoWriteToolCall(data: ToolPayload | null | undefined): boolean {
   return !!(data && data.rawInput && data.rawInput.variant === 'TodoWrite');
 }
 
-export function renderToolCard(initial) {
-  // initial is the `tool_call` update payload.
+export interface ToolCard {
+  node: HTMLElement;
+  applyUpdate(payload: ToolPayload): void;
+  appendDelta(payload: unknown): void;
+  getStatus(): string;
+  ingestExternal?: (payload: ToolPayload) => void;
+  isTodo?: boolean;
+}
+
+export function renderToolCard(initial: ToolPayload): ToolCard {
   if (isTodoWriteToolCall(initial)) return renderTodoWriteCard(initial);
   const status = readStatus(initial) || 'Pending';
   const styleInfo = STATUS_STYLES[status] || STATUS_STYLES.Pending;
   const startedAt = Date.now();
-  let endedAt = null;
+  let endedAt: number | null = null;
 
   const kindEl   = el('span', { class: 'tool-pill__kind' }, (initial && initial.kind) || 'tool');
   const titleEl  = el('span', { class: 'tool-pill__label' }, inferToolTitle(initial || {}));
@@ -355,23 +404,19 @@ export function renderToolCard(initial) {
 
   let outputBuf = '';
 
-  // Tick the duration label while the call is running so the user sees
-  // elapsed time live (every 500ms is enough; cheap and aligned with the
-  // SSE token throttle). Skip the timer entirely when the initial payload
-  // is already terminal — no reason to tick a long-finished history pill.
-  let durTimer = null;
+  let durTimer: ReturnType<typeof setInterval> | null = null;
   const isTerminal = (status === 'Completed' || status === 'Failed' || status === 'Canceled');
   if (isTerminal) {
-    endedAt = startedAt; // unknown duration for replayed terminal calls
+    endedAt = startedAt;
     durEl.textContent = '';
   } else {
     durTimer = setInterval(() => {
-      if (endedAt) { clearInterval(durTimer); durTimer = null; return; }
+      if (endedAt) { if (durTimer) clearInterval(durTimer); durTimer = null; return; }
       durEl.textContent = fmtDur(Date.now() - startedAt) + '…';
     }, 500);
   }
 
-  function setStatus(canonical) {
+  function setStatus(canonical: string): void {
     const info = STATUS_STYLES[canonical] || styleInfo;
     statusEl.className = `tool-pill__status ${info.cls}`;
     statusEl.textContent = info.label;
@@ -382,7 +427,7 @@ export function renderToolCard(initial) {
     }
   }
 
-  function applyUpdate(payload) {
+  function applyUpdate(payload: ToolPayload): void {
     const canonical = readStatus(payload);
     if (canonical) setStatus(canonical);
     if (payload.title || (payload.rawInput && payload.rawInput.command)) {
@@ -394,15 +439,17 @@ export function renderToolCard(initial) {
       rawInputBody.textContent = JSON.stringify(payload.rawInput, null, 2);
     }
     if (Array.isArray(payload.content) && payload.content.length) {
-      // best-effort: concatenate text-ish content blocks
-      const chunks = [];
-      for (const c of payload.content) {
+      const chunks: string[] = [];
+      for (const c of payload.content as Array<unknown>) {
         if (!c) continue;
         if (typeof c === 'string') chunks.push(c);
-        else if (c.type === 'text' && typeof c.text === 'string') chunks.push(c.text);
-        else if (c.text) chunks.push(c.text);
-        else if (c.content) chunks.push(typeof c.content === 'string' ? c.content : JSON.stringify(c.content));
-        else chunks.push(JSON.stringify(c));
+        else if (typeof c === 'object') {
+          const co = c as { type?: string; text?: unknown; content?: unknown };
+          if (co.type === 'text' && typeof co.text === 'string') chunks.push(co.text);
+          else if (co.text) chunks.push(String(co.text));
+          else if (co.content) chunks.push(typeof co.content === 'string' ? co.content : JSON.stringify(co.content));
+          else chunks.push(JSON.stringify(c));
+        }
       }
       const joined = chunks.join('\n');
       if (joined.length > outputBuf.length) {
@@ -412,16 +459,20 @@ export function renderToolCard(initial) {
     }
   }
 
-  function appendDelta(payload) {
-    // tool_call_delta_chunk — shape not fully observed yet. Try common keys.
+  function appendDelta(payload: unknown): void {
     let chunk = '';
     if (typeof payload === 'string') chunk = payload;
-    else if (payload && typeof payload.text === 'string') chunk = payload.text;
-    else if (payload && payload.content) {
-      if (typeof payload.content === 'string') chunk = payload.content;
-      else if (typeof payload.content.text === 'string') chunk = payload.content.text;
-    } else if (payload && payload.delta) {
-      chunk = typeof payload.delta === 'string' ? payload.delta : JSON.stringify(payload.delta);
+    else if (payload && typeof payload === 'object') {
+      const p = payload as { text?: unknown; content?: unknown; delta?: unknown };
+      if (typeof p.text === 'string') chunk = p.text;
+      else if (p.content) {
+        if (typeof p.content === 'string') chunk = p.content;
+        else if (typeof (p.content as { text?: unknown }).text === 'string') chunk = (p.content as { text: string }).text;
+      } else if (p.delta) {
+        chunk = typeof p.delta === 'string' ? p.delta : JSON.stringify(p.delta);
+      } else {
+        chunk = JSON.stringify(payload);
+      }
     } else {
       chunk = JSON.stringify(payload);
     }
@@ -429,29 +480,21 @@ export function renderToolCard(initial) {
     outputBody.textContent = outputBuf;
   }
 
-  return { node, applyUpdate, appendDelta, getStatus: () => statusEl.textContent };
+  return { node, applyUpdate, appendDelta, getStatus: () => statusEl.textContent || '' };
 }
 
-// Specialized card for the TodoWrite tool. Renders a clean checklist
-// with a small status indicator per row (pending / in-progress / done)
-// and a header that summarizes the overall progress. Holds its own
-// accumulated state across merge=true patches:
-//   - merge=false replaces the list with the provided todos.
-//   - merge=true patches existing entries by id (content may be null,
-//     in which case only the status is updated).
-//
-// Returns the standard tool-card shape so the chat view can treat
-// it identically to other cards.
-export function renderTodoWriteCard(initial) {
+interface TodoEntry { content: string; status: string }
+
+export function renderTodoWriteCard(initial: ToolPayload): ToolCard {
   const startedAt = Date.now();
-  let endedAt = null;
-  // id -> { content, status }. Keys preserve insertion order so the
-  // list renders in the same order grok provided.
-  const todos = new Map();
+  let endedAt: number | null = null;
+  void startedAt; void endedAt;
+  const todos = new Map<string, TodoEntry>();
 
   const summaryEl = el('span', { class: 'todo-card__summary' }, '0/0');
   const titleEl   = el('span', { class: 'todo-card__title' }, 'plan');
   const statusEl  = el('span', { class: 'todo-card__status' }, 'running');
+  void titleEl;
   const head      = el('div', { class: 'todo-card__head' },
     el('span', { class: 'todo-card__ico' }, '☑'),
     titleEl,
@@ -462,19 +505,19 @@ export function renderTodoWriteCard(initial) {
   const list = el('ol', { class: 'todo-card__list' });
   const node = el('div', { class: 'tool-pill tool-pill--todo todo-card' }, head, list);
 
-  function statusGlyph(s) {
+  function statusGlyph(s: string | undefined): string {
     if (s === 'completed')   return '✓';
     if (s === 'in_progress') return '◐';
     if (s === 'cancelled' || s === 'canceled') return '×';
     return '○';
   }
 
-  function ingest(payload) {
+  function ingest(payload: ToolPayload): void {
     const ri = payload && payload.rawInput;
     if (!ri || !Array.isArray(ri.todos)) return;
     const merge = !!ri.merge;
     if (!merge) todos.clear();
-    for (const t of ri.todos) {
+    for (const t of ri.todos as Array<{ id?: string | number; content?: unknown; status?: unknown } | null>) {
       if (!t || t.id == null) continue;
       const key = String(t.id);
       const cur = todos.get(key) || { content: '', status: 'pending' };
@@ -484,7 +527,7 @@ export function renderTodoWriteCard(initial) {
     }
   }
 
-  function render() {
+  function render(): void {
     let done = 0, inProgress = 0;
     list.replaceChildren();
     for (const [id, t] of todos) {
@@ -505,7 +548,7 @@ export function renderTodoWriteCard(initial) {
       : `${done}/${total} done`;
   }
 
-  function applyStatus(payload) {
+  function applyStatus(payload: ToolPayload): void {
     const canonical = readStatus(payload);
     if (!canonical) return;
     if (canonical === 'Completed' || canonical === 'Failed' || canonical === 'Canceled') {
@@ -520,13 +563,12 @@ export function renderTodoWriteCard(initial) {
     }
   }
 
-  function applyUpdate(payload) {
+  function applyUpdate(payload: ToolPayload): void {
     ingest(payload);
     applyStatus(payload);
     render();
   }
 
-  // Seed from the initial payload.
   ingest(initial);
   applyStatus(initial);
   render();
@@ -534,16 +576,24 @@ export function renderTodoWriteCard(initial) {
   return {
     node,
     applyUpdate,
-    appendDelta: () => { /* TodoWrite uses rawInput, not delta chunks */ },
-    getStatus: () => statusEl.textContent,
-    // Custom hook used by chat.js to merge a follow-up TodoWrite tool
-    // call into this card instead of creating a sibling card.
-    ingestExternal: (payload) => { ingest(payload); applyStatus(payload); render(); },
+    appendDelta: (): void => { /* TodoWrite uses rawInput, not delta chunks */ },
+    getStatus: (): string => statusEl.textContent || '',
+    ingestExternal: (payload: ToolPayload): void => { ingest(payload); applyStatus(payload); render(); },
     isTodo: true,
   };
 }
 
-export function renderTokenFooter(meta) {
+export interface TokenMeta {
+  inputTokens?: number; input_tokens?: number;
+  outputTokens?: number; output_tokens?: number;
+  cachedReadTokens?: number; cached_read_tokens?: number; cachedTokens?: number;
+  reasoningTokens?: number; reasoning_tokens?: number;
+  totalTokens?: number | null; total_tokens?: number | null;
+  modelId?: string | null; model_id?: string | null; model?: string | null;
+  stopReason?: string | null; stop_reason?: string | null;
+}
+
+export function renderTokenFooter(meta: TokenMeta | null | undefined): HTMLElement {
   if (!meta) return el('div', { class: 'turn-footer' }, 'turn complete');
   const inputT  = meta.inputTokens     ?? meta.input_tokens     ?? '·';
   const outputT = meta.outputTokens    ?? meta.output_tokens    ?? '·';
@@ -567,27 +617,27 @@ export function renderTokenFooter(meta) {
   return el('div', { class: 'turn-footer' }, ...chips);
 }
 
-function chip(label, value) {
+function chip(label: string, value: unknown): HTMLElement {
   return el('span', { class: 'chip' },
     el('span', { class: 'chip-label' }, label),
     el('span', { class: 'chip-value' }, String(value)),
   );
 }
 
-export function renderCompactedPill(text) {
+export function renderCompactedPill(text: string | undefined): HTMLElement {
   return el('div', { class: 'compacted-pill' },
     el('span', { class: 'compacted-pill-label' }, 'context compacted'),
     text ? el('span', { class: 'compacted-pill-text' }, ' · ', text.slice(0, 120)) : null,
   );
 }
 
-export function renderErrorBanner(text) {
+export function renderErrorBanner(text: string | undefined): HTMLElement {
   return el('div', { class: 'error-banner' },
     el('span', { class: 'error-banner-label' }, 'error'),
     el('span', { class: 'error-banner-text' }, text || 'unknown error'),
   );
 }
 
-export function renderToast(text, kind) {
+export function renderToast(text: string, kind?: string): HTMLElement {
   return el('div', { class: `toast toast--${kind || 'info'}` }, text);
 }

@@ -31,7 +31,7 @@ import {
   renderCompactedPill,
   renderErrorBanner,
   renderToast,
-} from '../lib/render.js';
+} from '../lib/render';
 import { copyToClipboard, serializeConversation, serializeResumeCommand } from '../lib/copy';
 import { iconHtml } from '../lib/icons';
 import { fmtTokens } from '../lib/format';

@@ -179,9 +179,9 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 
 | Status | File                          | Target                          |
 |--------|-------------------------------|----------------------------------|
-| [ ]    | src/lib/render.js             | src/lib/render.ts                |
+| [x]    | src/lib/render.js             | src/lib/render.ts                |
 | [ ]    | src/views/chat.js             | src/views/chat.ts                |
-| [ ]    | src/main.js                   | src/main.ts                      |
+| [x]    | src/main.js                   | src/main.ts                      |
 
 ### Phase 8 — tests
 
