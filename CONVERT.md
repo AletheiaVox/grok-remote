@@ -203,6 +203,8 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | (new)                                 | test/sse-server.test.ts                  |
 | [x]    | (new)                                 | test/grok-cli-error.test.ts              |
 | [x]    | (new)                                 | test/retention.test.ts                   |
+| [x]    | (new)                                 | test/render-pure.test.ts                 |
+| [x]    | (new)                                 | test/fs-host.test.ts                     |
 | [ ]    | (new)                                 | test/render-todo.test.ts                 |
 | [ ]    | (new)                                 | test/render-attachments.test.ts          |
 | [ ]    | (new)                                 | test/agent-manager.test.ts               |
