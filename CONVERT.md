@@ -225,8 +225,10 @@ logged-in `grok` CLI on the host.
 
 | Status | Endpoint                            |
 |--------|--------------------------------------|
-| [ ]    | GET /api/health                      |
-| [ ]    | GET /api/version/current             |
+| [x]    | GET /api/health                      | (test/integration/server-boot.test.ts) |
+| [x]    | GET /api/hello                       | (test/integration/server-boot.test.ts) |
+| [x]    | GET /api/version/current             | (test/integration/server-boot.test.ts) |
+| [x]    | GET /api/unknown -> 404              | (test/integration/server-boot.test.ts) |
 | [ ]    | GET /api/version/latest              |
 | [ ]    | GET /api/version/releases            |
 | [ ]    | GET /api/agents                      |
