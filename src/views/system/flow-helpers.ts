@@ -160,3 +160,85 @@ export function countActive(calls: Record<string, { endedAt?: number | null }>):
   }
   return n;
 }
+
+/**
+ * Map AcpClient lifecycle states to the canonical set the renderer cares
+ * about: idle | running | errored | disconnected | unknown. `exited`/`killed`
+ * both collapse to `disconnected` since the UI shows them identically.
+ */
+export function normaliseStatus(s: unknown): string {
+  if (!s) return 'unknown';
+  if (s === 'exited' || s === 'killed') return 'disconnected';
+  return String(s);
+}
+
+/**
+ * Build an SVG path pair (line + filled area) for a sparkline of token usage
+ * over time. Each point is `{ t, v }`; we plot `v` across width `W`, height
+ * `H`. Returns `{ line, area }` strings ready to drop into <path d="...">.
+ */
+export interface SparkPoint { t?: number; v: number }
+export interface SparkPath { line: string; area: string }
+
+export function buildSparkPath(history: SparkPoint[], W: number, H: number): SparkPath {
+  const n = history.length;
+  const values = history.map((p) => p.v);
+  const vMin = Math.min(...values);
+  const vMax = Math.max(...values);
+  const range = Math.max(1, vMax - vMin);
+  const xs = (i: number): number => (n === 1 ? 0 : (i / (n - 1)) * W);
+  const ys = (v: number): number => H - 1 - ((v - vMin) / range) * (H - 2);
+  let d = '';
+  for (let i = 0; i < n; i++) {
+    const point = history[i];
+    if (!point) continue;
+    const x = xs(i).toFixed(2);
+    const y = ys(point.v).toFixed(2);
+    d += (i === 0 ? 'M' : 'L') + ' ' + x + ' ' + y + ' ';
+  }
+  const area = d + ` L ${W} ${H} L 0 ${H} Z`;
+  return { line: d.trim(), area };
+}
+
+/** Stringify any value safely for display. Returns '' for null/undefined,
+ * the string itself for strings, JSON.stringify(_, null, 2) for objects, and
+ * String(v) as a last resort if JSON.stringify throws (cyclic refs, etc.). */
+export function safeStringify(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
+
+/**
+ * Compact token counter used in flow node labels: passes through under 1k,
+ * uses `Nk` with one decimal under 1M, `NM` with two decimals above.
+ * Distinct from `src/lib/format.fmtTokens` (which uses different thresholds
+ * for the chat-status pill).
+ */
+export function formatTokens(n: number): string {
+  if (!Number.isFinite(n)) return '0';
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+/**
+ * Human-readable duration for the "running for Xs / Xm Xs" labels on tool
+ * pills and bg-task cards. Empty string for non-finite or negative inputs.
+ */
+export function fmtDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}m${s ? ` ${s}s` : ''}`;
+}
+
+/** Collapse whitespace, trim, cap at 40 chars with an ellipsis. Returns
+ * "(no command)" when the input is empty. Used by bg-task cards. */
+export function truncCmd(s: unknown): string {
+  const t = String(s || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= 40) return t || '(no command)';
+  return t.slice(0, 37) + '...';
+}

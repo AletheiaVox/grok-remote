@@ -50,6 +50,12 @@ import {
   extractToolContent,
   mergeToolContent,
   countActive,
+  normaliseStatus,
+  buildSparkPath,
+  safeStringify,
+  formatTokens,
+  fmtDuration,
+  truncCmd,
 } from './flow-helpers.js';
 
 // How often we re-poll the agent list. SSE keeps individual cards live; this
@@ -292,11 +298,7 @@ const STATUS_RANK = {
   running: 0, idle: 1, errored: 2, disconnected: 3, exited: 3, killed: 3, unknown: 4,
 };
 
-function normaliseStatus(s) {
-  if (!s) return 'unknown';
-  if (s === 'exited' || s === 'killed') return 'disconnected';
-  return s;
-}
+// normaliseStatus moved to ./flow-helpers.ts
 
 // ── custom node renderers ─────────────────────────────────────────────────
 
@@ -341,22 +343,7 @@ function AgentNode({ data }) {
   );
 }
 
-function buildSparkPath(history, W, H) {
-  const n = history.length;
-  const vMin = Math.min(...history.map(p => p.v));
-  const vMax = Math.max(...history.map(p => p.v));
-  const range = Math.max(1, vMax - vMin);
-  const xs = (i) => (n === 1 ? 0 : (i / (n - 1)) * W);
-  const ys = (v) => H - 1 - ((v - vMin) / range) * (H - 2);
-  let d = '';
-  for (let i = 0; i < n; i++) {
-    const x = xs(i).toFixed(2);
-    const y = ys(history[i].v).toFixed(2);
-    d += (i === 0 ? 'M' : 'L') + ' ' + x + ' ' + y + ' ';
-  }
-  const area = d + ` L ${W} ${H} L 0 ${H} Z`;
-  return { line: d.trim(), area };
-}
+// buildSparkPath moved to ./flow-helpers.ts
 
 function ToolNode({ data }) {
   const status = (data.status || 'pending').toLowerCase();
@@ -631,11 +618,7 @@ function SubAgentNode({ data }) {
   );
 }
 
-function safeStringify(v) {
-  if (v == null) return '';
-  if (typeof v === 'string') return v;
-  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
-}
+// safeStringify moved to ./flow-helpers.ts
 
 const NODE_TYPES = {
   agent: AgentNode,
@@ -657,11 +640,7 @@ const EDGE_TYPES = {
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-function formatTokens(n) {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  return `${(n / 1_000_000).toFixed(2)}M`;
-}
+// formatTokens moved to ./flow-helpers.ts
 
 // Cap how many bg-task cards we draw per agent. Running first, then a few
 // most-recent exited. The dagre layout still fans these out as siblings.
@@ -2417,20 +2396,7 @@ function saveTokenHistory(id, history) {
 // countActive, pickToolLabel, extractToolContent, mergeToolContent moved to
 // ./flow-helpers.ts. Imported at the top of the file.
 
-function fmtDuration(ms) {
-  if (!Number.isFinite(ms) || ms < 0) return '';
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
-  const m = Math.floor(ms / 60000);
-  const s = Math.round((ms % 60000) / 1000);
-  return `${m}m${s ? ` ${s}s` : ''}`;
-}
-
-function truncCmd(s) {
-  const t = String(s || '').replace(/\s+/g, ' ').trim();
-  if (t.length <= 40) return t || '(no command)';
-  return t.slice(0, 37) + '...';
-}
+// fmtDuration + truncCmd moved to ./flow-helpers.ts
 
 function FlowTotalsOverlay({ agents, agentState }) {
   let totalTokens = 0;
