@@ -120,7 +120,7 @@ export interface SavedFile {
   size: number;
 }
 
-function countRunningBg(record: AgentRecord | null | undefined): number {
+export function countRunningBg(record: AgentRecord | null | undefined): number {
   if (!record || !record.bgTasks) return 0;
   let n = 0;
   for (const v of record.bgTasks.values()) if (!v.completed) n++;
