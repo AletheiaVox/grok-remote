@@ -171,7 +171,7 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | src/views/system/skills.js            | src/views/system/skills.ts               |
 | [x]    | src/views/system/worktrees.js         | src/views/system/worktrees.ts            |
 | [x]    | src/views/system/flow.js              | src/views/system/flow.ts                 |
-| [x]    | src/views/system/flow.jsx             | src/views/system/flow.tsx                | <!-- @ts-nocheck for now, strict types in Phase 10 -->
+| [x]    | src/views/system/flow.jsx             | src/views/system/flow.tsx                |
 
 | [x]    | src/views/system/flow-floating-edge.jsx | src/views/system/flow-floating-edge.tsx |
 
@@ -180,7 +180,7 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | Status | File                          | Target                          |
 |--------|-------------------------------|----------------------------------|
 | [x]    | src/lib/render.js             | src/lib/render.ts                |
-| [x]    | src/views/chat.js             | src/views/chat.ts                | <!-- @ts-nocheck for now, strict types in Phase 10 -->
+| [x]    | src/views/chat.js             | src/views/chat.ts                |
 
 | [x]    | src/main.js                   | src/main.ts                      |
 
@@ -246,8 +246,12 @@ logged-in `grok` CLI on the host.
 - [x] delete any remaining `.js` files in `src/` and `lib/` (only `experiments/probe.js` left, already excluded)
 - [x] update README's repo layout section (lib/ and src/ trees retyped + new modules listed)
 - [x] document local integration test runner in README (Develop > Tests subsection)
-- [ ] remove `// @ts-nocheck` from `src/views/system/flow.tsx` and add real types
-- [ ] remove `// @ts-nocheck` from `src/views/chat.ts` and add real types
+- [x] remove `// @ts-nocheck` from `src/views/system/flow.tsx` and add real types
+- [x] remove `// @ts-nocheck` from `src/views/chat.ts` and add real types
+      (chat.ts: 103 field declarations + method param `any` annotations + catch
+       `any` casts. flow.tsx had no implicit-any errors once the directive was
+       removed because params were already explicit. typecheck clean, 246 tests
+       pass, build clean.)
 - [x] fix backlog of `tsc --noEmit` errors accumulated through phases 4-6
       (acp-client never-collapse, attach-images EventListener casts,
        version-footer LatestInfo, settings PageModule, mcp AddServerBody,

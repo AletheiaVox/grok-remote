@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Live agent flow page.
 //
 // Ported verbatim from flow.jsx. Full strict typing of the React Flow + dagre
