@@ -1,17 +1,8 @@
 #!/usr/bin/env node
 // grok-remote installer
-//
-// Pure Node. Runs through the system setup with animated, terminal-style
-// feedback. Each step is a self-contained cycle:
-//
-//   1. Heading types in
-//   2. Spinner animates while the underlying command runs
-//   3. The step resolves into an OK/FAIL panel
-//
-// Ends with a transmission frame showing your tailnet URL.
 
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
+import { spawn, spawnSync, type SpawnOptions } from 'node:child_process';
+import fs, { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
@@ -21,19 +12,18 @@ import {
   chooseModeFromInputs,
   chooseAutoStartFromInputs,
   pm2EnvForMode,
+  type InstallMode,
 } from './lib/install-mode.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HERE = __dirname;
 
-// ─── colors ──────────────────────────────────────────────────────────────
-const COLOR = !process.env.NO_COLOR && (
-  process.env.FORCE_COLOR === '1' ||
+const COLOR = !process.env['NO_COLOR'] && (
+  process.env['FORCE_COLOR'] === '1' ||
   process.stdout.isTTY ||
-  (process.env.npm_lifecycle_event && process.env.TERM_PROGRAM)
+  (Boolean(process.env['npm_lifecycle_event']) && Boolean(process.env['TERM_PROGRAM']))
 );
-const rgb = (r, g, b) => COLOR ? `\x1b[38;2;${r};${g};${b}m` : '';
-const bg  = (r, g, b) => COLOR ? `\x1b[48;2;${r};${g};${b}m` : '';
+const rgb = (r: number, g: number, b: number): string => COLOR ? `\x1b[38;2;${r};${g};${b}m` : '';
 const bold = COLOR ? '\x1b[1m' : '';
 const dim  = COLOR ? '\x1b[2m' : '';
 const reset = COLOR ? '\x1b[0m' : '';
@@ -48,10 +38,8 @@ const MUT  = rgb(134, 147, 164);
 const DIM  = rgb(74, 83, 96);
 const WHITE = rgb(232, 240, 248);
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-// ─── ASCII art ───────────────────────────────────────────────────────────
-// The logo: a hole opens, deepens, flashes, and settles into "GR" (Grok Remote).
 const FIGLET_GR = [
   '  ██████╗ ██████╗  ',
   ' ██╔════╝ ██╔══██╗ ',
@@ -62,59 +50,49 @@ const FIGLET_GR = [
 ];
 const SUBTITLE = '·  g r o k   r e m o t e  ·  v0.1.0';
 
-// Hole frames. Each is 19 wide × 6 tall, lined up with FIGLET_GR.
-// Read top to bottom as: empty → pinprick → ring → deepening hole → pulse → flash.
-const HOLE_FRAMES = [
-  // 0: empty
+const HOLE_FRAMES: string[][] = [
   ['                   ',
    '                   ',
    '                   ',
    '                   ',
    '                   ',
    '                   '],
-  // 1: pinprick at center
   ['                   ',
    '                   ',
    '         ·         ',
    '         ·         ',
    '                   ',
    '                   '],
-  // 2: small ring forming
   ['                   ',
    '        ░░░        ',
    '       ░   ░       ',
    '       ░   ░       ',
    '        ░░░        ',
    '                   '],
-  // 3: medium ring with first shading
   ['       ░░░░░       ',
    '      ░▒▒▒▒▒░      ',
    '     ░▒▓▓▓▓▓▒░     ',
    '     ░▒▓▓▓▓▓▒░     ',
    '      ░▒▒▒▒▒░      ',
    '       ░░░░░       '],
-  // 4: large hole with depth
   ['     ░░░░░░░░░     ',
    '    ░▒▒▒▓▓▓▒▒▒░    ',
    '   ░▒▓▓█████▓▓▒░   ',
    '   ░▒▓▓█████▓▓▒░   ',
    '    ░▒▒▒▓▓▓▒▒▒░    ',
    '     ░░░░░░░░░     '],
-  // 5: fully formed hole, suspense
   ['    ░░░░░░░░░░░    ',
    '  ░▒▒▒▒▓▓▓▓▓▒▒▒▒░  ',
    ' ░▒▓▓▓███████▓▓▓▒░ ',
    ' ░▒▓▓▓███████▓▓▓▒░ ',
    '  ░▒▒▒▒▓▓▓▓▓▒▒▒▒░  ',
    '    ░░░░░░░░░░░    '],
-  // 6: bright pulse from inside
   ['    ▓▓▓▓▓▓▓▓▓▓▓    ',
    '  ▓███████████████ ',
    ' █████████████████ ',
    ' █████████████████ ',
    '  ▓███████████████ ',
    '    ▓▓▓▓▓▓▓▓▓▓▓    '],
-  // 7: full white flash
   ['███████████████████',
    '███████████████████',
    '███████████████████',
@@ -123,35 +101,36 @@ const HOLE_FRAMES = [
    '███████████████████'],
 ];
 
-const HOLE_SEQUENCE = [
+type Phase = 'hole' | 'pulse' | 'flash';
+
+const HOLE_SEQUENCE: { idx: number; hold: number; phase: Phase }[] = [
   { idx: 0, hold: 60,  phase: 'hole' },
   { idx: 1, hold: 110, phase: 'hole' },
   { idx: 2, hold: 110, phase: 'hole' },
   { idx: 3, hold: 130, phase: 'hole' },
   { idx: 4, hold: 150, phase: 'hole' },
-  { idx: 5, hold: 280, phase: 'hole' },   // suspense beat
+  { idx: 5, hold: 280, phase: 'hole' },
   { idx: 6, hold: 70,  phase: 'pulse' },
   { idx: 7, hold: 55,  phase: 'flash' },
 ];
 
-// Color per char per phase (for the hole animation).
-function holeColorFor(ch, phase) {
+function holeColorFor(ch: string, phase: Phase): string {
   if (phase === 'flash') return rgb(232, 240, 248);
   if (phase === 'pulse') {
     if (ch === '█') return rgb(232, 240, 248);
     if (ch === '▓') return TEAL;
     return TEAL;
   }
-  // hole phase: bright rim → fading into a void
-  if (ch === '·' || ch === '░') return TEAL;             // rim glow
-  if (ch === '▒') return BLUE;                            // mid depth
-  if (ch === '▓') return rgb(60, 84, 122);                // deep
-  if (ch === '█') return rgb(18, 24, 38);                 // void
+  if (ch === '·' || ch === '░') return TEAL;
+  if (ch === '▒') return BLUE;
+  if (ch === '▓') return rgb(60, 84, 122);
+  if (ch === '█') return rgb(18, 24, 38);
   return reset;
 }
-function colorizeHoleLine(line, phase) {
+
+function colorizeHoleLine(line: string, phase: Phase): string {
   let out = '';
-  let last = null;
+  let last: string | null = null;
   for (const ch of line) {
     const c = holeColorFor(ch, phase);
     if (c !== last) { out += c; last = c; }
@@ -160,15 +139,13 @@ function colorizeHoleLine(line, phase) {
   return out + reset;
 }
 
-function write(s) { process.stdout.write(s); }
-function writeLn(s = '') { process.stdout.write(s + '\n'); }
-function hideCursor() { if (COLOR) write('\x1b[?25l'); }
-function showCursor() { if (COLOR) write('\x1b[?25h'); }
-function moveUp(n) { if (COLOR && n > 0) write(`\x1b[${n}A`); }
-function clearLine() { if (COLOR) write('\x1b[2K\r'); }
+function write(s: string): void { process.stdout.write(s); }
+function writeLn(s: string = ''): void { process.stdout.write(s + '\n'); }
+function hideCursor(): void { if (COLOR) write('\x1b[?25l'); }
+function showCursor(): void { if (COLOR) write('\x1b[?25h'); }
+function moveUp(n: number): void { if (COLOR && n > 0) write(`\x1b[${n}A`); }
 
-// Gradient helper: blend teal -> blue across a vertical span
-function gradColor(i, total) {
+function gradColor(i: number, total: number): string {
   const t = total <= 1 ? 0 : i / (total - 1);
   const r = Math.round(94 + (121 - 94) * t);
   const g = Math.round(234 + (192 - 234) * t);
@@ -176,11 +153,9 @@ function gradColor(i, total) {
   return rgb(r, g, b);
 }
 
-// ─── intro animation ─────────────────────────────────────────────────────
-async function intro() {
+async function intro(): Promise<void> {
   hideCursor();
 
-  // Static fallback for non-TTY (CI, redirected output): just print GR.
   if (!COLOR || !process.stdout.isTTY) {
     for (let i = 0; i < FIGLET_GR.length; i++) {
       writeLn(`${gradColor(i, FIGLET_GR.length)}${FIGLET_GR[i]}${reset}`);
@@ -191,21 +166,19 @@ async function intro() {
     return;
   }
 
-  // Reserve 6 lines for the figlet; we'll overwrite them frame by frame.
   for (let i = 0; i < 6; i++) writeLn();
   moveUp(6);
 
-  // Play the hole sequence: empty → ring → hole → pulse → flash.
   for (const { idx, hold, phase } of HOLE_SEQUENCE) {
     const frame = HOLE_FRAMES[idx];
+    if (!frame) continue;
     for (let i = 0; i < frame.length; i++) {
-      write('\x1b[2K\r' + colorizeHoleLine(frame[i], phase) + '\n');
+      write('\x1b[2K\r' + colorizeHoleLine(frame[i] || '', phase) + '\n');
     }
     moveUp(frame.length);
     await sleep(hold);
   }
 
-  // Reveal final GR figlet (replaces the flash).
   for (let i = 0; i < FIGLET_GR.length; i++) {
     write('\x1b[2K\r' + gradColor(i, FIGLET_GR.length) + FIGLET_GR[i] + reset + '\n');
   }
@@ -215,10 +188,7 @@ async function intro() {
   showCursor();
 }
 
-// ─── mode prompt ─────────────────────────────────────────────────────────
-// Ask the user whether they want local-only or tailnet mode. Honors flags
-// and env, and falls back to tailnet on non-TTY (preserves prior behavior).
-async function chooseMode() {
+async function chooseMode(): Promise<InstallMode> {
   const args = process.argv.slice(2);
   const resolved = chooseModeFromInputs({ args, env: process.env, isTTY: process.stdin.isTTY });
   if (resolved) return resolved;
@@ -235,14 +205,10 @@ async function chooseMode() {
   }
   writeLn();
   if (answer === '1' || answer === 'local' || answer === 'l') return 'local';
-  // Default and explicit 2/tailnet/t all map to tailnet.
   return 'tailnet';
 }
 
-// Ask whether to register a launchd entry so the server resumes after reboot.
-// Honors --auto-start / --no-auto-start and AUTO_START=1/0. Defaults to false
-// on non-TTY so CI installs do not write launchd plists silently.
-async function chooseAutoStart() {
+async function chooseAutoStart(): Promise<boolean> {
   const args = process.argv.slice(2);
   const resolved = chooseAutoStartFromInputs({ args, env: process.env, isTTY: process.stdin.isTTY });
   if (resolved !== null) return resolved;
@@ -262,40 +228,56 @@ async function chooseAutoStart() {
   return true;
 }
 
-// ─── shell helpers ───────────────────────────────────────────────────────
-function which(cmd) {
+interface CmdResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  code: number | null;
+}
+
+function which(cmd: string): string {
   const r = spawnSync('which', [cmd], { encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : '';
 }
-function tryCmd(cmd, args, opts = {}) {
+
+function tryCmd(cmd: string, args: string[], opts: SpawnOptions = {}): CmdResult {
   const r = spawnSync(cmd, args, { encoding: 'utf8', ...opts });
-  return { ok: r.status === 0, stdout: (r.stdout || '').trim(), stderr: (r.stderr || '').trim(), code: r.status };
+  return {
+    ok: r.status === 0,
+    stdout: (r.stdout || '').toString().trim(),
+    stderr: (r.stderr || '').toString().trim(),
+    code: r.status,
+  };
 }
-// Run a command with the spinner running until it completes.
-function runCmd(cmd, args, opts = {}) {
-  return new Promise((resolve) => {
+
+function runCmd(cmd: string, args: string[], opts: SpawnOptions = {}): Promise<CmdResult> {
+  return new Promise<CmdResult>((resolve) => {
     const child = spawn(cmd, args, {
-      encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       ...opts,
     });
     let out = '', err = '';
-    child.stdout.on('data', (b) => { out += b; });
-    child.stderr.on('data', (b) => { err += b; });
-    child.on('error', (e) => resolve({ ok: false, stdout: out, stderr: err + e.message, code: -1 }));
-    child.on('exit', (code) => resolve({ ok: code === 0, stdout: out.trim(), stderr: err.trim(), code }));
+    child.stdout?.on('data', (b: Buffer) => { out += b.toString('utf8'); });
+    child.stderr?.on('data', (b: Buffer) => { err += b.toString('utf8'); });
+    child.on('error', (e: Error) => resolve({ ok: false, stdout: out, stderr: err + e.message, code: -1 }));
+    child.on('exit', (code) => resolve({ ok: code === 0, stdout: out.trim(), stderr: err.trim(), code: code ?? -1 }));
   });
 }
 
-// ─── step rendering ──────────────────────────────────────────────────────
+interface StepResult {
+  ok?: boolean;
+  status?: 'ok' | 'fail' | 'skip' | 'warn';
+  detail?: string;
+}
+
 let stepCounter = 0;
-async function step(label, fn, opts = {}) {
+
+async function step(label: string, fn: () => Promise<StepResult>): Promise<StepResult> {
   stepCounter++;
   const num = String(stepCounter).padStart(2, '0');
 
-  // Typewriter heading
   const prefix = `${DIM}┃${reset} ${BLUE}${bold}[${num}]${reset} `;
-  const animate = COLOR && process.stdout.isTTY && !process.env.NO_ANIMATE;
+  const animate = COLOR && process.stdout.isTTY && !process.env['NO_ANIMATE'];
   if (animate) {
     write(prefix);
     for (const ch of label) {
@@ -307,12 +289,11 @@ async function step(label, fn, opts = {}) {
     write(`${prefix}${label} `);
   }
 
-  // Spinner + run
   const spinChars = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
   let stop = false;
   let spinIdx = 0;
   const spinStart = Date.now();
-  const spin = async () => {
+  const spinFn = async (): Promise<void> => {
     if (!animate) return;
     hideCursor();
     while (!stop) {
@@ -321,69 +302,75 @@ async function step(label, fn, opts = {}) {
       await sleep(80);
     }
   };
-  const spinTask = spin();
-  let result;
+  const spinTask = spinFn();
+  let result: StepResult;
   try {
     result = await fn();
   } catch (e) {
-    result = { ok: false, status: 'fail', detail: String(e?.message || e) };
+    const msg = e instanceof Error ? e.message : String(e);
+    result = { ok: false, status: 'fail', detail: msg };
   }
   stop = true;
   await spinTask;
   const elapsed = Date.now() - spinStart;
 
-  // Render the final status badge
   const status = result.status || (result.ok ? 'ok' : 'fail');
-  let badge;
+  let badge: string;
   if (status === 'ok') badge = `${GOOD}[ OK ]${reset}`;
   else if (status === 'skip') badge = `${MUT}[skip]${reset}`;
   else if (status === 'warn') badge = `${WARN}[warn]${reset}`;
   else badge = `${BAD}[FAIL]${reset}`;
   const detail = result.detail ? ` ${MUT}${result.detail}${reset}` : '';
   const time = elapsed > 200 ? ` ${DIM}(${(elapsed / 1000).toFixed(1)}s)${reset}` : '';
-  // Clear the spinner cell, write the final badge
   if (animate) write('\x1b[2K\r');
   writeLn(`${prefix}${label} ${badge}${time}${detail}`);
   showCursor();
   return result;
 }
 
-// ─── steps ───────────────────────────────────────────────────────────────
-const ctx = {};   // shared state
+interface InstallerCtx {
+  mode?: InstallMode;
+  autoStart?: boolean;
+  appPort?: number;
+  localURL?: string;
+  tailnetDNS?: string;
+  tailnetIP?: string;
+  tailnetURL?: string;
+}
 
-async function stepCheckNode() {
+const ctx: InstallerCtx = {};
+
+async function stepCheckNode(): Promise<StepResult> {
   return step('verify node >= 20', async () => {
     const r = tryCmd('node', ['--version']);
     if (!r.ok) return { ok: false, detail: 'node binary not found' };
     const m = r.stdout.match(/v(\d+)\.(\d+)/);
-    if (!m) return { ok: false, detail: `unparseable: ${r.stdout}` };
+    if (!m || !m[1]) return { ok: false, detail: `unparseable: ${r.stdout}` };
     const major = parseInt(m[1], 10);
     if (major < 20) return { ok: false, detail: `${r.stdout} (< v20)` };
     return { ok: true, detail: r.stdout };
   });
 }
 
-async function stepEnsurePM2() {
+async function stepEnsurePM2(): Promise<StepResult> {
   return step('ensure pm2 (process manager)', async () => {
     if (which('pm2')) {
       const v = tryCmd('pm2', ['--version']);
       return { ok: true, detail: `present, v${v.stdout}` };
     }
-    // npm install -g pm2
     const r = await runCmd('npm', ['install', '-g', 'pm2'], { env: process.env });
     if (!r.ok) return { ok: false, detail: r.stderr.split('\n').pop() || 'npm install -g pm2 failed' };
     return { ok: true, detail: 'installed via npm' };
   });
 }
 
-async function stepEnsureTailscale() {
+async function stepEnsureTailscale(): Promise<StepResult> {
   return step('ensure tailscale', async () => {
     if (which('tailscale')) {
       const v = tryCmd('tailscale', ['version']);
       const ver = v.stdout.split('\n')[0] || 'present';
       return { ok: true, detail: ver };
     }
-    // Try Homebrew install (macOS)
     if (process.platform === 'darwin') {
       if (!which('brew')) {
         return { ok: false, detail: 'install Homebrew first (https://brew.sh) or install Tailscale manually' };
@@ -392,7 +379,6 @@ async function stepEnsureTailscale() {
       if (!r.ok) return { ok: false, detail: 'brew install tailscale failed' };
       return { ok: true, detail: 'installed via brew' };
     }
-    // Linux: defer to curl-based installer
     if (process.platform === 'linux') {
       return { ok: false, detail: 'install Tailscale: curl -fsSL https://tailscale.com/install.sh | sh' };
     }
@@ -400,37 +386,22 @@ async function stepEnsureTailscale() {
   });
 }
 
-async function stepStartTailscaled() {
+async function stepStartTailscaled(): Promise<StepResult> {
   return step('start tailscaled (daemon)', async () => {
-    // Check if it's already running (try `tailscale status`)
     const status = tryCmd('tailscale', ['status', '--json']);
     if (status.ok) return { status: 'skip', detail: 'already running' };
 
     if (process.platform === 'darwin') {
-      // Two ways to get tailscaled running on macOS:
-      //   (a) Tailscale.app from tailscale.com (GUI; runs daemon in user
-      //       session). If /Applications/Tailscale.app exists, the user
-      //       just needs to launch it once.
-      //   (b) CLI-only install (e.g. `brew install tailscale`): no GUI,
-      //       no auto-start. Tailscale ships an installer for a launchd
-      //       LaunchDaemon: `sudo tailscale install-system-daemon`.
-      //
-      // We don't run sudo from here because the installer's piped stdio
-      // can't relay a password prompt. We detect the situation and tell
-      // the user exactly what to run, then warn so they re-run install.sh.
       const hasGuiApp = fs.existsSync('/Applications/Tailscale.app');
       if (hasGuiApp) {
         return { ok: false, status: 'warn',
           detail: 'open Tailscale.app once to start the daemon, then re-run installer' };
       }
-      // CLI-only install path.
       const hasSystemDaemonCmd = tryCmd('tailscale', ['install-system-daemon', '--help']).ok;
       if (hasSystemDaemonCmd) {
         return { ok: false, status: 'warn',
           detail: 'CLI-only install detected. Run: sudo tailscale install-system-daemon (you will be prompted for your password). Then re-run installer.' };
       }
-      // Neither GUI app nor system-daemon subcommand: tell them to grab
-      // the official GUI from tailscale.com.
       return { ok: false, status: 'warn',
         detail: 'Tailscale daemon not running. Install Tailscale.app from https://tailscale.com/download and launch it once. Then re-run installer.' };
     }
@@ -438,8 +409,6 @@ async function stepStartTailscaled() {
     if (process.platform === 'linux') {
       const r = await runCmd('sudo', ['systemctl', 'enable', '--now', 'tailscaled']);
       if (r.ok) return { ok: true, detail: 'tailscaled enabled via systemctl' };
-      // Common reason for failure: no systemd (Alpine, minimal containers).
-      // Detect and give a more useful hint.
       const hasSystemctl = !!which('systemctl');
       if (!hasSystemctl) {
         return { ok: false, status: 'warn',
@@ -452,34 +421,43 @@ async function stepStartTailscaled() {
   });
 }
 
-async function stepTailscaleAuth() {
+interface TailscaleStatusJson {
+  BackendState?: string;
+  Self?: { LoginName?: string; UserID?: string; DNSName?: string; TailscaleIPs?: string[] };
+  User?: Record<string, { LoginName?: string } | undefined>;
+}
+
+async function stepTailscaleAuth(): Promise<StepResult> {
   return step('check tailscale auth', async () => {
     const s = tryCmd('tailscale', ['status', '--json']);
     if (!s.ok) return { ok: false, detail: 'tailscaled not reachable (run earlier step first)' };
     try {
-      const parsed = JSON.parse(s.stdout);
+      const parsed = JSON.parse(s.stdout) as TailscaleStatusJson;
       if (parsed.BackendState === 'Running') {
-        const user = parsed.Self?.LoginName || parsed.User?.[parsed.Self?.UserID]?.LoginName || '';
+        const selfLoginName = parsed.Self?.LoginName;
+        const uid = parsed.Self?.UserID;
+        const userLoginName = uid && parsed.User ? parsed.User[uid]?.LoginName : undefined;
+        const user = selfLoginName || userLoginName || '';
         return { ok: true, detail: user ? `logged in as ${user}` : 'logged in' };
       }
       if (parsed.BackendState === 'NeedsLogin' || parsed.BackendState === 'NoState') {
-        // Try `tailscale up` (interactive): prints a URL to authenticate in the browser
         return { ok: false, status: 'warn',
           detail: 'run `tailscale up` and open the URL printed to authenticate, then re-run installer' };
       }
       return { ok: false, detail: `BackendState=${parsed.BackendState}` };
-    } catch (e) {
+    } catch {
       return { ok: false, detail: 'failed to parse tailscale status' };
     }
   });
 }
 
-async function stepResolveTailnetURL() {
+async function stepResolveTailnetURL(): Promise<StepResult> {
   return step('resolve tailnet url', async () => {
     const s = tryCmd('tailscale', ['status', '--json']);
     if (!s.ok) return { ok: false, detail: 'tailscale status failed' };
-    let parsed;
-    try { parsed = JSON.parse(s.stdout); } catch { return { ok: false, detail: 'unparseable JSON' }; }
+    let parsed: TailscaleStatusJson;
+    try { parsed = JSON.parse(s.stdout) as TailscaleStatusJson; }
+    catch { return { ok: false, detail: 'unparseable JSON' }; }
     const self = parsed.Self || {};
     const dnsName = (self.DNSName || '').replace(/\.$/, '');
     const ip = (self.TailscaleIPs && self.TailscaleIPs[0]) || '';
@@ -492,7 +470,7 @@ async function stepResolveTailnetURL() {
   });
 }
 
-async function stepNpmInstall() {
+async function stepNpmInstall(): Promise<StepResult> {
   return step('install app dependencies (npm install)', async () => {
     if (existsSync(path.join(HERE, 'node_modules', 'vite'))) {
       return { status: 'skip', detail: 'node_modules present' };
@@ -504,19 +482,18 @@ async function stepNpmInstall() {
   });
 }
 
-async function stepBuildVite() {
+async function stepBuildVite(): Promise<StepResult> {
   return step('build dashboard (vite build)', async () => {
     const r = await runCmd('npx', ['vite', 'build'], { cwd: HERE });
     if (!r.ok) return { ok: false, detail: 'vite build failed' };
-    const out = r.stdout.split('\n').find(l => l.includes('built in')) || 'built';
+    const out = r.stdout.split('\n').find((l) => l.includes('built in')) || 'built';
     return { ok: true, detail: out.trim() };
   });
 }
 
-async function stepWriteEcosystem() {
+async function stepWriteEcosystem(): Promise<StepResult> {
   return step('write pm2 ecosystem config', async () => {
     const cfgPath = path.join(HERE, 'ecosystem.config.cjs');
-    // Already shipped, but stamp the cwd at install time so PM2 has it on save
     if (!existsSync(cfgPath)) {
       return { ok: false, detail: 'ecosystem.config.cjs missing from repo' };
     }
@@ -524,9 +501,8 @@ async function stepWriteEcosystem() {
   });
 }
 
-async function stepStartPM2() {
+async function stepStartPM2(): Promise<StepResult> {
   return step('start under pm2', async () => {
-    // Stop any prior instance first (best-effort)
     await runCmd('pm2', ['delete', 'grok-remote'], { cwd: HERE });
     const r = await runCmd('pm2', ['start', 'ecosystem.config.cjs'], {
       cwd: HERE,
@@ -538,15 +514,11 @@ async function stepStartPM2() {
   });
 }
 
-async function stepEnableBootStartup() {
+async function stepEnableBootStartup(): Promise<StepResult> {
   return step('enable auto-start on boot', async () => {
     if (!ctx.autoStart) {
       return { status: 'skip', detail: 'declined; you can run `pm2 startup` later' };
     }
-    // On macOS, pm2 writes a user-level launchd plist into
-    // ~/Library/LaunchAgents and loads it without sudo. On Linux, pm2
-    // typically prints a `sudo env PATH=... pm2 startup ...` command for
-    // the user to run; we surface that line as the detail.
     const args = ['startup'];
     if (process.platform === 'darwin') args.push('launchd');
     args.push('-u', os.userInfo().username, '--hp', os.homedir());
@@ -561,7 +533,7 @@ async function stepEnableBootStartup() {
   });
 }
 
-async function stepSavePM2() {
+async function stepSavePM2(): Promise<StepResult> {
   return step('save pm2 process list', async () => {
     const r = await runCmd('pm2', ['save']);
     return r.ok
@@ -570,32 +542,29 @@ async function stepSavePM2() {
   });
 }
 
-async function stepInstallGrCommand() {
+async function stepInstallGrCommand(): Promise<StepResult> {
   return step('install gr command (global shortcut)', async () => {
     const grPath = path.join(HERE, 'bin', 'gr');
     if (!existsSync(grPath)) {
       return { ok: false, detail: `bin/gr missing at ${grPath}` };
     }
-    // chmod +x
     try { spawnSync('chmod', ['+x', grPath]); } catch { /* best-effort */ }
 
-    const tryLink = (target) => {
-      try { mkdirSync(path.dirname(target), { recursive: true }); } catch {}
+    const tryLink = (target: string): boolean => {
+      try { mkdirSync(path.dirname(target), { recursive: true }); } catch { /* ignore */ }
       const r = spawnSync('ln', ['-sf', grPath, target], { encoding: 'utf8' });
       return r.status === 0;
     };
 
-    // 1. /usr/local/bin
     const sysTarget = '/usr/local/bin/gr';
     if (tryLink(sysTarget)) {
       return { ok: true, detail: sysTarget };
     }
 
-    // 2. ~/.local/bin (verify on PATH)
     const userBin = path.join(os.homedir(), '.local', 'bin');
     const userTarget = path.join(userBin, 'gr');
     if (tryLink(userTarget)) {
-      const onPath = (process.env.PATH || '').split(path.delimiter).includes(userBin);
+      const onPath = (process.env['PATH'] || '').split(path.delimiter).includes(userBin);
       if (onPath) {
         return { ok: true, detail: userTarget };
       }
@@ -605,7 +574,6 @@ async function stepInstallGrCommand() {
       };
     }
 
-    // 3. neither writable
     return {
       ok: true, status: 'warn',
       detail: `link manually: ln -sf ${grPath} /usr/local/bin/gr`,
@@ -613,15 +581,13 @@ async function stepInstallGrCommand() {
   });
 }
 
-// ─── finale ──────────────────────────────────────────────────────────────
-async function finale() {
+async function finale(): Promise<void> {
   const localURL = ctx.localURL || `http://localhost:${ctx.appPort || 7910}`;
   const isTailnet = ctx.mode !== 'local' && !!ctx.tailnetURL;
   writeLn();
-  // ASCII frame
   const frameTop = `${DIM}╔══════════════════════════════════════════════════════════════════╗${reset}`;
   const frameBot = `${DIM}╚══════════════════════════════════════════════════════════════════╝${reset}`;
-  const frameMid = (s) => `${DIM}║${reset}  ${s}${' '.repeat(Math.max(0, 64 - stripAnsi(s).length))}${DIM}║${reset}`;
+  const frameMid = (s: string): string => `${DIM}║${reset}  ${s}${' '.repeat(Math.max(0, 64 - stripAnsi(s).length))}${DIM}║${reset}`;
   writeLn(frameTop);
   if (isTailnet) {
     writeLn(frameMid(`${GOOD}● ready${reset}   ${dim}grok-remote is live on your tailnet${reset}`));
@@ -656,28 +622,20 @@ async function finale() {
   }
   writeLn();
 }
-function stripAnsi(s) { return s.replace(/\x1b\[[0-9;]*m/g, ''); }
 
-// Decide whether to auto-open the dashboard in a browser. Skip when:
-//   - --no-open / -n flag is passed
-//   - NO_OPEN=1 / GR_NO_OPEN=1 env var is set
-//   - CI=1
-//   - running over SSH (SSH_CONNECTION set) - no display on the remote box
-function shouldAutoOpen() {
+function stripAnsi(s: string): string { return s.replace(/\x1b\[[0-9;]*m/g, ''); }
+
+function shouldAutoOpen(): boolean {
   const args = process.argv.slice(2);
   if (args.includes('--no-open') || args.includes('-n')) return false;
-  if (process.env.NO_OPEN === '1' || process.env.GR_NO_OPEN === '1') return false;
-  if (process.env.CI === '1' || process.env.CI === 'true') return false;
-  if (process.env.SSH_CONNECTION || process.env.SSH_CLIENT) return false;
+  if (process.env['NO_OPEN'] === '1' || process.env['GR_NO_OPEN'] === '1') return false;
+  if (process.env['CI'] === '1' || process.env['CI'] === 'true') return false;
+  if (process.env['SSH_CONNECTION'] || process.env['SSH_CLIENT']) return false;
   return true;
 }
 
-// Open the URL in Chrome if available; fall back to the OS default browser.
-// Returns { ok, detail }.
-async function openInBrowser(url) {
+async function openInBrowser(url: string): Promise<StepResult> {
   if (process.platform === 'darwin') {
-    // Try Chrome via `open -a`. On failure (Chrome not installed) fall back
-    // to the OS default browser.
     const chrome = await runCmd('open', ['-a', 'Google Chrome', url]);
     if (chrome.ok) return { ok: true, detail: 'opened in Chrome' };
     const def = await runCmd('open', [url]);
@@ -706,22 +664,19 @@ async function openInBrowser(url) {
   return { ok: false, detail: `unsupported platform: ${process.platform}` };
 }
 
-async function stepOpenBrowser() {
+async function stepOpenBrowser(): Promise<StepResult> {
   return step('open dashboard in Chrome', async () => {
     if (!shouldAutoOpen()) return { status: 'skip', detail: 'disabled via flag/env' };
-    // Prefer tailnet URL when available; fall back to local URL otherwise.
     const url = (ctx.mode !== 'local' && ctx.tailnetURL)
       ? ctx.tailnetURL
       : (ctx.localURL || `http://localhost:${ctx.appPort || 7910}`);
-    // Give the server a beat to accept connections.
     await sleep(800);
     return openInBrowser(url);
   });
 }
 
-// ─── main ────────────────────────────────────────────────────────────────
-async function main() {
-  ctx.appPort = parseInt(process.env.PORT || '7910', 10);
+async function main(): Promise<void> {
+  ctx.appPort = parseInt(process.env['PORT'] || '7910', 10);
   ctx.localURL = `http://localhost:${ctx.appPort}`;
 
   try {
@@ -747,9 +702,10 @@ async function main() {
     await finale();
   } catch (e) {
     showCursor();
-    writeLn(`\n${BAD}installer crashed:${reset} ${e?.stack || e}`);
+    const stack = e instanceof Error ? (e.stack || e.message) : String(e);
+    writeLn(`\n${BAD}installer crashed:${reset} ${stack}`);
     process.exit(1);
   }
 }
 
-main();
+void main();

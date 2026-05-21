@@ -131,8 +131,8 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | Status | File                          | Target                          |
 |--------|-------------------------------|----------------------------------|
 | [x]    | server.js                     | server.ts                        |
-| [ ]    | installer.js                  | installer.ts                     |
-| [ ]    | bin/gr                        | bin/gr (shebang `node`, stays JS or compiled .ts) |
+| [x]    | installer.js                  | installer.ts                     |
+| [skip] | bin/gr                        | shebang script symlinked into PATH; converting requires `tsx` at every shell invocation. Left as JS so global `gr` stays a single, fast file. |
 | [skip] | public/sw.js                  | service worker, browser-served as-is |
 | [skip] | experiments/probe.js          | one-off scratch, leave alone     |
 
