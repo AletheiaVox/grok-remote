@@ -4,7 +4,7 @@ import { api } from '../lib/api.js';
 import { el } from '../lib/render.js';
 import { iconHtml } from '../lib/icons.js';
 import { THEMES, getTheme, setTheme } from '../lib/themes.js';
-import { SETTINGS_SECTIONS, getSettingsPage } from './system/index.js';
+import { SETTINGS_SECTIONS, getSettingsPage } from './system/index';
 
 function clampInt(raw: unknown, min: number, max: number, fallback: number): number {
   const n = parseInt(String(raw).trim(), 10);

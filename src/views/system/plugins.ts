@@ -1,23 +1,34 @@
 // Plugins page.
-//
-// Lists every plugin grok knows about (from the inspect payload), sorted
-// enabled-first. Each row exposes the name, version, scope, an
-// enabled/disabled badge, and a `provides` summary (skills/agents/mcp/
-// hooks counts). Click to expand for the full record.
-//
-// We do NOT toggle plugins on/off from the dashboard. Plugins live in
-// config.toml under `[plugins.<name>]`; writing TOML in-place is deferred
-// to a later commit. For now, "copy disable" emits a snippet the user can
-// paste into config.toml manually.
 
 import {
   loadInspect, buildPageShell, setStatusLine, clearBody,
   addConfigFilesBanner,
   buildGroup, buildItem, emptyState, buildFooterHint, copyToClipboard,
   shortenPath, scopeLabel,
+  type ConfigFile,
 } from './_native_common.js';
 
-let activeContainer = null;
+interface PluginRecord {
+  name?: string;
+  version?: string;
+  scope?: string;
+  enabled?: boolean;
+  path?: string;
+  provides?: {
+    skills?: number;
+    agents?: number;
+    mcpServers?: number;
+    hooks?: boolean | number;
+  };
+  [k: string]: unknown;
+}
+
+interface InspectShape {
+  plugins?: PluginRecord[];
+  configSources?: { userPath?: string; projectPaths?: string[] };
+}
+
+let activeContainer: HTMLElement | null = null;
 let aborted = false;
 
 const BLURB = `
@@ -29,14 +40,14 @@ const BLURB = `
   there.
 `;
 
-export async function mount(container) {
+export async function mount(container: HTMLElement): Promise<void> {
   activeContainer = container;
   aborted = false;
   const section = buildPageShell(container, { title: 'Plugins', blurb: BLURB });
   await reload(section);
 }
 
-export function unmount() {
+export function unmount(): void {
   aborted = true;
   if (activeContainer) {
     activeContainer.replaceChildren();
@@ -44,17 +55,19 @@ export function unmount() {
   }
 }
 
-async function reload(section) {
+async function reload(section: HTMLElement): Promise<void> {
   const { inspect, error } = await loadInspect();
   if (aborted) return;
   if (error) { setStatusLine(section, 'failed to load: ' + error); return; }
 
-  const plugins = Array.isArray(inspect && inspect.plugins) ? inspect.plugins : [];
-  const cs = (inspect && inspect.configSources) || {};
-  addConfigFilesBanner(section, [
-    cs.userPath && { label: 'user config', path: cs.userPath },
-    ...(Array.isArray(cs.projectPaths) ? cs.projectPaths.map(p => ({ label: 'project config', path: p })) : []),
-  ].filter(Boolean));
+  const data = (inspect && typeof inspect === 'object') ? inspect as InspectShape : {};
+  const plugins = Array.isArray(data.plugins) ? data.plugins : [];
+  const cs = data.configSources || {};
+  const banner: ConfigFile[] = [
+    ...(cs.userPath ? [{ label: 'user config', path: cs.userPath }] : []),
+    ...(Array.isArray(cs.projectPaths) ? cs.projectPaths.map((p) => ({ label: 'project config', path: p })) : []),
+  ];
+  addConfigFilesBanner(section, banner);
   clearBody(section);
 
   if (!plugins.length) {
@@ -65,7 +78,6 @@ async function reload(section) {
     return;
   }
 
-  // Sort enabled first, then by name.
   const sorted = [...plugins].sort((a, b) => {
     const ea = a.enabled === false ? 1 : 0;
     const eb = b.enabled === false ? 1 : 0;
@@ -73,8 +85,8 @@ async function reload(section) {
     return String(a.name || '').localeCompare(String(b.name || ''));
   });
 
-  const enabled  = sorted.filter(p => p.enabled !== false);
-  const disabled = sorted.filter(p => p.enabled === false);
+  const enabled  = sorted.filter((p) => p.enabled !== false);
+  const disabled = sorted.filter((p) => p.enabled === false);
 
   if (enabled.length) {
     const { wrap, list } = buildGroup({ label: 'enabled', count: enabled.length });
@@ -91,13 +103,13 @@ async function reload(section) {
     'Install plugins via the CLI: <code>grok plugins add &lt;path&gt;</code>. ' +
     'Disabling a plugin writes <code>[plugins.&lt;name&gt;] enabled = false</code> to ' +
     'config.toml; in-place edits from the dashboard are not yet wired up, so use the ' +
-    '"copy disable line" button and paste manually.'
+    '"copy disable line" button and paste manually.',
   ));
 }
 
-function makePluginCard(p) {
+function makePluginCard(p: PluginRecord): HTMLElement {
   const provides = p.provides || {};
-  const tags = [];
+  const tags: string[] = [];
   if (p.version) tags.push(`v${p.version}`);
   if (p.scope) tags.push(scopeLabel(p.scope));
   if (provides.skills)     tags.push(`skills: ${provides.skills}`);
@@ -111,10 +123,10 @@ function makePluginCard(p) {
     title: enabled
       ? 'copy a [plugins.<name>] enabled = false snippet for config.toml'
       : 'copy a [plugins.<name>] enabled = true snippet for config.toml',
-    onClick: async (ev) => {
+    onClick: async (ev: MouseEvent): Promise<void> => {
       const snippet = `[plugins.${tomlKey(p.name)}]\nenabled = ${enabled ? 'false' : 'true'}\n`;
       const ok = await copyToClipboard(snippet);
-      const btn = ev.currentTarget;
+      const btn = ev.currentTarget as HTMLButtonElement;
       const prior = btn.textContent;
       btn.textContent = ok ? 'copied' : 'copy failed';
       setTimeout(() => { btn.textContent = prior; }, 1500);
@@ -134,8 +146,7 @@ function makePluginCard(p) {
   });
 }
 
-function tomlKey(name) {
-  // Bare keys must match [A-Za-z0-9_-]+; otherwise wrap in quotes.
+function tomlKey(name: string | null | undefined): string {
   if (typeof name !== 'string' || !name) return '"_"';
   if (/^[A-Za-z0-9_-]+$/.test(name)) return name;
   return '"' + name.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';

@@ -16,7 +16,7 @@ import { api } from '../lib/api';
 import { openStream } from '../lib/sse';
 import { mountFilesTab, unmountFilesTab } from './files';
 import { mountTraceTab, unmountTraceTab } from './trace';
-import { mountScoped as mountFlowTab, unmount as unmountFlowTab } from './system/flow.js';
+import { mountScoped as mountFlowTab, unmount as unmountFlowTab } from './system/flow';
 import attachSlashPalette from '../lib/slash-palette';
 import { setupImageAttach } from '../lib/attach-images';
 import {

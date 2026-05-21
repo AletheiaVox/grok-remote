@@ -1,26 +1,17 @@
-// Shared rendering primitives for the "native config" dashboard pages
-// (hooks, agents, plugins, marketplaces, lsp). Each of those pages is
-// essentially the same shape: a blurb at the top, optional toolbar, a
-// list of items grouped by scope/source, and per-item click-to-expand
-// raw JSON. Centralizing the helpers here keeps the per-page modules
-// small and visually consistent with the health page.
-//
-// All helpers return plain DOM nodes. CSS classes reuse the existing
-// `system-page-*` and `health-item-*` rules from src/style.css so we do
-// not need new styling.
+// Shared rendering primitives for the "native config" dashboard pages.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-/**
- * Fetch the inspect payload via the shared system-health endpoint.
- * The endpoint returns { ok, inspect, ... }; on failure we surface the
- * inspectError string when present.
- *
- * @returns {Promise<{ inspect: object|null, error: string|null }>}
- */
-export async function loadInspect() {
+export interface InspectResult { inspect: unknown; error: string | null }
+
+export async function loadInspect(): Promise<InspectResult> {
   try {
-    const data = await api.systemHealth.get();
+    const data = await api.systemHealth.get() as {
+      ok?: boolean;
+      error?: string;
+      inspect?: unknown;
+      inspectError?: string;
+    };
     if (!data || !data.ok) {
       return { inspect: null, error: (data && data.error) || 'unknown failure' };
     }
@@ -29,18 +20,17 @@ export async function loadInspect() {
     }
     return { inspect: data.inspect || null, error: null };
   } catch (err) {
-    return { inspect: null, error: err && err.message ? err.message : String(err) };
+    const msg = err instanceof Error ? err.message : String(err);
+    return { inspect: null, error: msg };
   }
 }
 
-/** Render the standard page chrome (title + blurb), returning the section element. */
-// Append a config-file banner to an existing page section (call this after
-// the inspect payload arrives so paths land directly from configSources).
-export function addConfigFilesBanner(section, configFiles) {
+export interface ConfigFile { label?: string; path?: string }
+
+export function addConfigFilesBanner(section: HTMLElement | null, configFiles: ConfigFile[] | null | undefined): void {
   if (!section || !Array.isArray(configFiles) || !configFiles.length) return;
   const header = section.querySelector('.system-page-header');
   if (!header) return;
-  // Remove any previously-rendered banner so re-renders don't stack.
   const prev = header.querySelector('.system-page-configfiles');
   if (prev) prev.remove();
   const banner = document.createElement('div');
@@ -65,10 +55,10 @@ export function addConfigFilesBanner(section, configFiles) {
       copyBtn.className = 'health-copy-btn';
       copyBtn.textContent = 'copy';
       copyBtn.title = 'copy path to clipboard';
-      copyBtn.addEventListener('click', async (ev) => {
+      copyBtn.addEventListener('click', async (ev: MouseEvent) => {
         ev.stopPropagation();
         try {
-          await navigator.clipboard.writeText(cf.path);
+          await navigator.clipboard.writeText(cf.path!);
           copyBtn.textContent = 'copied';
           setTimeout(() => { copyBtn.textContent = 'copy'; }, 1200);
         } catch { /* ignore */ }
@@ -80,7 +70,13 @@ export function addConfigFilesBanner(section, configFiles) {
   header.appendChild(banner);
 }
 
-export function buildPageShell(container, { title, blurb, configFiles }) {
+export interface PageShellOptions {
+  title: string;
+  blurb: string;
+  configFiles?: ConfigFile[];
+}
+
+export function buildPageShell(container: HTMLElement, { title, blurb, configFiles }: PageShellOptions): HTMLElement {
   container.replaceChildren();
   const section = document.createElement('section');
   section.className = 'system-page';
@@ -91,14 +87,10 @@ export function buildPageShell(container, { title, blurb, configFiles }) {
   h2.textContent = title;
   const p = document.createElement('p');
   p.className = 'system-page-sub';
-  // blurb may include <code> tags; assign as innerHTML for the few we need.
   p.innerHTML = blurb;
   header.appendChild(h2);
   header.appendChild(p);
 
-  // Canonical config-file banner. Lists the file(s) that own this concept
-  // so users know where to look + edit. Each entry: { label, path }. Path
-  // gets a copy button next to it (handy for paste-into-terminal flows).
   if (Array.isArray(configFiles) && configFiles.length) {
     const banner = document.createElement('div');
     banner.className = 'system-page-configfiles';
@@ -122,10 +114,10 @@ export function buildPageShell(container, { title, blurb, configFiles }) {
         copyBtn.className = 'health-copy-btn';
         copyBtn.textContent = 'copy';
         copyBtn.title = 'copy path to clipboard';
-        copyBtn.addEventListener('click', async (ev) => {
+        copyBtn.addEventListener('click', async (ev: MouseEvent) => {
           ev.stopPropagation();
           try {
-            await navigator.clipboard.writeText(cf.path);
+            await navigator.clipboard.writeText(cf.path!);
             copyBtn.textContent = 'copied';
             setTimeout(() => { copyBtn.textContent = 'copy'; }, 1200);
           } catch { /* ignore */ }
@@ -141,38 +133,34 @@ export function buildPageShell(container, { title, blurb, configFiles }) {
   const status = document.createElement('div');
   status.className = 'system-page-empty';
   status.textContent = 'loading...';
-  status.dataset.role = 'status';
+  status.dataset['role'] = 'status';
   section.appendChild(status);
 
   container.appendChild(section);
   return section;
 }
 
-/** Replace whatever is below the header with a single "(message)" line. */
-export function setStatusLine(section, text) {
-  // Remove every direct child after the header.
+export function setStatusLine(section: HTMLElement, text: string): void {
   const header = section.querySelector('.system-page-header');
   section.replaceChildren();
   if (header) section.appendChild(header);
-  const el = document.createElement('div');
-  el.className = 'system-page-empty';
-  el.textContent = text;
-  el.dataset.role = 'status';
-  section.appendChild(el);
+  const elNode = document.createElement('div');
+  elNode.className = 'system-page-empty';
+  elNode.textContent = text;
+  elNode.dataset['role'] = 'status';
+  section.appendChild(elNode);
 }
 
-/** Remove everything below the header (used before re-rendering content). */
-export function clearBody(section) {
+export function clearBody(section: HTMLElement): void {
   const header = section.querySelector('.system-page-header');
   section.replaceChildren();
   if (header) section.appendChild(header);
 }
 
-/**
- * Build one collapsible "group" with a heading and an item-list inside.
- * Heading shows the label plus a count.
- */
-export function buildGroup({ label, count, openByDefault = true }) {
+export interface GroupOptions { label: string; count: number; openByDefault?: boolean }
+export interface BuiltGroup { wrap: HTMLElement; list: HTMLElement }
+
+export function buildGroup({ label, count, openByDefault = true }: GroupOptions): BuiltGroup {
   const wrap = document.createElement('section');
   wrap.className = 'health-section';
   const head = document.createElement('header');
@@ -210,24 +198,40 @@ export function buildGroup({ label, count, openByDefault = true }) {
     chev.textContent = hidden ? '▸' : '▾';
     head.setAttribute('aria-expanded', String(!hidden));
   });
-  head.addEventListener('keydown', (ev) => {
+  head.addEventListener('keydown', (ev: KeyboardEvent) => {
     if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); head.click(); }
   });
   return { wrap, list };
 }
 
-/**
- * Build a single item card with optional secondary, tags, description,
- * path, and an expand-to-JSON toggle. Action buttons can be added via
- * the optional `actions` array (each entry: { label, className, onClick,
- * disabled, title }).
- */
+export interface ItemAction {
+  label: string;
+  className?: string;
+  onClick?: (ev: MouseEvent, card: HTMLElement) => void;
+  disabled?: boolean;
+  title?: string;
+}
+
+export interface BuildItemOptions {
+  primary?: string;
+  secondary?: string | null;
+  secondaryClass?: string;
+  tags?: string[];
+  description?: string;
+  path?: string;
+  sourceLabel?: string;
+  sourcePath?: string;
+  fullRecord?: unknown;
+  actions?: ItemAction[];
+  pluginTag?: string;
+}
+
 export function buildItem({
   primary, secondary, secondaryClass,
   tags, description, path,
   sourceLabel, sourcePath,
   fullRecord, actions, pluginTag,
-}) {
+}: BuildItemOptions): HTMLElement {
   const card = document.createElement('div');
   card.className = 'health-item';
 
@@ -280,7 +284,7 @@ export function buildItem({
       b.textContent = a.label;
       if (a.title) b.title = a.title;
       if (a.disabled) b.disabled = true;
-      b.addEventListener('click', (ev) => { a.onClick && a.onClick(ev, card); });
+      b.addEventListener('click', (ev: MouseEvent) => { a.onClick && a.onClick(ev, card); });
       right.appendChild(b);
     }
   }
@@ -305,9 +309,6 @@ export function buildItem({
     card.appendChild(code);
   }
 
-  // Source attribution. When sourcePath is provided, render a dashed-top
-  // row showing where this config item is defined plus a copy-to-clipboard
-  // button so users can paste the path into a terminal or editor.
   if (sourceLabel || sourcePath) {
     const src = document.createElement('div');
     src.className = 'health-item-source';
@@ -327,7 +328,7 @@ export function buildItem({
       copyBtn.className = 'health-copy-btn';
       copyBtn.textContent = 'copy';
       copyBtn.title = 'copy path to clipboard';
-      copyBtn.addEventListener('click', async (ev) => {
+      copyBtn.addEventListener('click', async (ev: MouseEvent) => {
         ev.stopPropagation();
         try {
           await navigator.clipboard.writeText(sourcePath);
@@ -352,8 +353,9 @@ export function buildItem({
   return card;
 }
 
-/** Small helper: a "(empty state)" block with optional CLI hint. */
-export function emptyState({ message, hint }) {
+export interface EmptyStateOptions { message: string; hint?: string }
+
+export function emptyState({ message, hint }: EmptyStateOptions): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'system-page-empty';
   const m = document.createElement('p');
@@ -372,8 +374,7 @@ export function emptyState({ message, hint }) {
   return wrap;
 }
 
-/** Footer line showing the CLI hint at the bottom of the page. */
-export function buildFooterHint(text) {
+export function buildFooterHint(text: string): HTMLElement {
   const p = document.createElement('p');
   p.className = 'system-page-sub';
   p.style.marginTop = '12px';
@@ -381,20 +382,19 @@ export function buildFooterHint(text) {
   return p;
 }
 
-export function shortenPath(p) {
+export function shortenPath(p: string | null | undefined): string {
   if (!p) return '';
   const home = '/Users/dan';
   if (p.startsWith(home)) return '~' + p.slice(home.length);
   return p;
 }
 
-export function safeStringify(v, indent) {
+export function safeStringify(v: unknown, indent?: number): string {
   try { return JSON.stringify(v, null, indent); }
   catch { return String(v); }
 }
 
-/** Map a scope/source value to a stable display label. */
-export function scopeLabel(s) {
+export function scopeLabel(s: unknown): string {
   if (!s) return 'unknown';
   const lc = String(s).toLowerCase();
   if (lc === 'user' || lc === 'global') return 'user';
@@ -404,8 +404,7 @@ export function scopeLabel(s) {
   return lc;
 }
 
-/** Copy text to the clipboard; resolve true on success. */
-export async function copyToClipboard(text) {
+export async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;

@@ -1,21 +1,34 @@
 // LSP servers page.
-//
-// Read-only listing of every LSP server grok has configured for this
-// project. Each entry binds a language to a server command + args + root
-// markers. Empty by default; most users do not need this.
-//
-// Entries live under `[[lsp]]` in config.toml. In-browser TOML editing is
-// not yet wired up; the page exposes a "copy as TOML" affordance per
-// entry plus a starter snippet at the bottom.
 
 import {
   loadInspect, buildPageShell, setStatusLine, clearBody,
   addConfigFilesBanner,
   buildGroup, buildItem, emptyState, buildFooterHint, copyToClipboard,
   shortenPath, scopeLabel,
+  type ConfigFile,
 } from './_native_common.js';
 
-let activeContainer = null;
+interface LspSource { type?: string; path?: string; plugin_name?: string }
+interface LspServer {
+  language?: string;
+  name?: string;
+  command?: string;
+  args?: string[];
+  root_markers?: string[];
+  rootMarkers?: string[];
+  filetypes?: string[];
+  scope?: string;
+  source?: LspSource;
+  env?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
+interface InspectShape {
+  lspServers?: LspServer[];
+  configSources?: { userPath?: string; projectPaths?: string[] };
+}
+
+let activeContainer: HTMLElement | null = null;
 let aborted = false;
 
 const BLURB = `
@@ -26,14 +39,14 @@ const BLURB = `
   need this; it's an advanced opt-in.
 `;
 
-export async function mount(container) {
+export async function mount(container: HTMLElement): Promise<void> {
   activeContainer = container;
   aborted = false;
   const section = buildPageShell(container, { title: 'LSP servers', blurb: BLURB });
   await reload(section);
 }
 
-export function unmount() {
+export function unmount(): void {
   aborted = true;
   if (activeContainer) {
     activeContainer.replaceChildren();
@@ -41,17 +54,19 @@ export function unmount() {
   }
 }
 
-async function reload(section) {
+async function reload(section: HTMLElement): Promise<void> {
   const { inspect, error } = await loadInspect();
   if (aborted) return;
   if (error) { setStatusLine(section, 'failed to load: ' + error); return; }
 
-  const items = Array.isArray(inspect && inspect.lspServers) ? inspect.lspServers : [];
-  const cs = (inspect && inspect.configSources) || {};
-  addConfigFilesBanner(section, [
-    cs.userPath && { label: 'user config', path: cs.userPath },
-    ...(Array.isArray(cs.projectPaths) ? cs.projectPaths.map(p => ({ label: 'project config', path: p })) : []),
-  ].filter(Boolean));
+  const data = (inspect && typeof inspect === 'object') ? inspect as InspectShape : {};
+  const items = Array.isArray(data.lspServers) ? data.lspServers : [];
+  const cs = data.configSources || {};
+  const banner: ConfigFile[] = [
+    ...(cs.userPath ? [{ label: 'user config', path: cs.userPath }] : []),
+    ...(Array.isArray(cs.projectPaths) ? cs.projectPaths.map((p) => ({ label: 'project config', path: p })) : []),
+  ];
+  addConfigFilesBanner(section, banner);
   clearBody(section);
 
   if (!items.length) {
@@ -62,17 +77,16 @@ async function reload(section) {
     section.appendChild(buildFooterHint(
       'Starter snippet: ' +
       '<code>[[lsp]] language = "typescript" command = "typescript-language-server" ' +
-      'args = ["--stdio"] root_markers = ["package.json", "tsconfig.json"]</code>'
+      'args = ["--stdio"] root_markers = ["package.json", "tsconfig.json"]</code>',
     ));
     return;
   }
 
-  // Group by source/scope when available.
-  const byKey = new Map();
+  const byKey = new Map<string, LspServer[]>();
   for (const s of items) {
     const key = String((s.source && s.source.type) || s.scope || 'user').toLowerCase();
     if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(s);
+    byKey.get(key)!.push(s);
   }
   for (const [key, list] of byKey) {
     const { wrap, list: listEl } = buildGroup({ label: scopeLabel(key), count: list.length });
@@ -82,16 +96,16 @@ async function reload(section) {
 
   section.appendChild(buildFooterHint(
     'Edits land in <code>config.toml</code> under <code>[[lsp]]</code>. ' +
-    'Use the per-entry copy buttons to grab a TOML snippet you can drop in.'
+    'Use the per-entry copy buttons to grab a TOML snippet you can drop in.',
   ));
 }
 
-function makeLspCard(s) {
+function makeLspCard(s: LspServer): HTMLElement {
   const lang = s.language || s.name || '(unknown)';
   const cmd = s.command || '';
   const args = Array.isArray(s.args) ? s.args : [];
-  const markers = Array.isArray(s.root_markers || s.rootMarkers) ? (s.root_markers || s.rootMarkers) : [];
-  const tags = [];
+  const markers = Array.isArray(s.root_markers || s.rootMarkers) ? (s.root_markers || s.rootMarkers)! : [];
+  const tags: string[] = [];
   if (markers.length) tags.push(`roots: ${markers.join(', ')}`);
   if (Array.isArray(s.filetypes) && s.filetypes.length) tags.push(`filetypes: ${s.filetypes.join(', ')}`);
 
@@ -100,9 +114,9 @@ function makeLspCard(s) {
   const actions = [{
     label: 'copy TOML',
     title: 'copy a [[lsp]] block you can paste into config.toml',
-    onClick: async (ev) => {
+    onClick: async (ev: MouseEvent): Promise<void> => {
       const ok = await copyToClipboard(toToml(s));
-      const btn = ev.currentTarget;
+      const btn = ev.currentTarget as HTMLButtonElement;
       const prior = btn.textContent;
       btn.textContent = ok ? 'copied' : 'copy failed';
       setTimeout(() => { btn.textContent = prior; }, 1500);
@@ -123,8 +137,8 @@ function makeLspCard(s) {
   });
 }
 
-function toToml(s) {
-  const lines = ['[[lsp]]'];
+function toToml(s: LspServer): string {
+  const lines: string[] = ['[[lsp]]'];
   const lang = s.language || s.name;
   if (lang) lines.push(`language = ${q(lang)}`);
   if (s.command) lines.push(`command = ${q(s.command)}`);
@@ -145,6 +159,6 @@ function toToml(s) {
   return lines.join('\n') + '\n';
 }
 
-function q(s) {
+function q(s: string): string {
   return '"' + String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }

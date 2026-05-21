@@ -17,7 +17,7 @@ import { el } from './lib/render.js';
 import { registerPwa } from './lib/pwa';
 import { applyTheme, getTheme, nextTheme, getThemeMeta } from './lib/themes';
 import { installVersionFooter } from './lib/version-footer';
-import { SYSTEM_PAGES, getSystemPage, getSettingsPage } from './views/system/index.js';
+import { SYSTEM_PAGES, getSystemPage, getSettingsPage } from './views/system/index';
 import { iconHtml } from './lib/icons';
 
 // Apply persisted theme as early as possible (before any DOM is drawn) so the

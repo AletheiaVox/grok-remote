@@ -17,7 +17,7 @@ import {
   addConfigFilesBanner,
   buildGroup, emptyState, buildFooterHint,
   shortenPath, scopeLabel, safeStringify,
-} from './_native_common.js';
+} from './_native_common';
 
 let activeContainer = null;
 let aborted = false;
