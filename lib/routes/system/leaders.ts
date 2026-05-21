@@ -1,21 +1,14 @@
-// leaders routes. See docs/leader.md.
-//
-// Registered routes:
-//   GET    /api/system/leaders                          -> list leaders
-//   GET    /api/system/leaders/:pid                     -> info for one leader
-//   POST   /api/system/leaders/kill                     -> kill all leaders
-//   GET    /api/system/leaders/:pid/profile/status      -> profile status (text)
-//   POST   /api/system/leaders/:pid/profile/start       -> start profiling
-//   POST   /api/system/leaders/:pid/profile/stop        -> stop profiling
-//
-// All grok invocations go through lib/grok-cli.js.
+// leaders routes.
 
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+
 import { send, readJsonBody } from '../helpers.js';
 import { runGrok, runGrokJson, runGrokText, errorToResponse } from '../../grok-cli.js';
+import type { RouteRegistrar, RouteParams } from '../system.js';
 
-export function register(add) {
+export function register(add: RouteRegistrar): void {
   add('GET',  '/api/system/leaders',                       handleList);
   add('POST', '/api/system/leaders/kill',                  handleKill);
   add('GET',  '/api/system/leaders/:pid',                  handleInfo);
@@ -24,7 +17,11 @@ export function register(add) {
   add('POST', '/api/system/leaders/:pid/profile/stop',     handleProfileStop);
 }
 
-async function handleList(req, res) {
+function isValidPid(s: unknown): s is string {
+  return typeof s === 'string' && /^[0-9]+$/.test(s);
+}
+
+async function handleList(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const data = await runGrokJson(['leader', 'list', '--json']);
     send(res, 200, { ok: true, data });
@@ -33,8 +30,8 @@ async function handleList(req, res) {
   }
 }
 
-async function handleInfo(req, res, _url, params) {
-  const pid = (params && params.pid) || '';
+async function handleInfo(_req: IncomingMessage, res: ServerResponse, _url: URL, params?: RouteParams): Promise<void> {
+  const pid = (params && params['pid']) || '';
   if (!isValidPid(pid)) {
     send(res, 400, { ok: false, error: 'invalid pid' });
     return;
@@ -47,7 +44,7 @@ async function handleInfo(req, res, _url, params) {
   }
 }
 
-async function handleKill(req, res) {
+async function handleKill(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     await runGrok(['leader', 'kill']);
     send(res, 200, { ok: true });
@@ -56,8 +53,8 @@ async function handleKill(req, res) {
   }
 }
 
-async function handleProfileStatus(req, res, _url, params) {
-  const pid = (params && params.pid) || '';
+async function handleProfileStatus(_req: IncomingMessage, res: ServerResponse, _url: URL, params?: RouteParams): Promise<void> {
+  const pid = (params && params['pid']) || '';
   if (!isValidPid(pid)) {
     send(res, 400, { ok: false, error: 'invalid pid' });
     return;
@@ -70,15 +67,19 @@ async function handleProfileStatus(req, res, _url, params) {
   }
 }
 
-async function handleProfileStart(req, res, _url, params) {
-  const pid = (params && params.pid) || '';
+async function handleProfileStart(req: IncomingMessage, res: ServerResponse, _url: URL, params?: RouteParams): Promise<void> {
+  const pid = (params && params['pid']) || '';
   if (!isValidPid(pid)) {
     send(res, 400, { ok: false, error: 'invalid pid' });
     return;
   }
-  let body = {};
-  try { body = await readJsonBody(req); }
-  catch (err) { send(res, 400, { ok: false, error: err.message }); return; }
+  let body: { frequencyHz?: unknown } = {};
+  try { body = (await readJsonBody(req) || {}) as { frequencyHz?: unknown }; }
+  catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    send(res, 400, { ok: false, error: msg });
+    return;
+  }
 
   const args = ['leader', 'profile', 'start'];
   if (body && body.frequencyHz != null) {
@@ -98,17 +99,21 @@ async function handleProfileStart(req, res, _url, params) {
   }
 }
 
-async function handleProfileStop(req, res, _url, params) {
-  const pid = (params && params.pid) || '';
+async function handleProfileStop(req: IncomingMessage, res: ServerResponse, _url: URL, params?: RouteParams): Promise<void> {
+  const pid = (params && params['pid']) || '';
   if (!isValidPid(pid)) {
     send(res, 400, { ok: false, error: 'invalid pid' });
     return;
   }
-  let body = {};
-  try { body = await readJsonBody(req); }
-  catch (err) { send(res, 400, { ok: false, error: err.message }); return; }
+  let body: { output?: unknown } = {};
+  try { body = (await readJsonBody(req) || {}) as { output?: unknown }; }
+  catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    send(res, 400, { ok: false, error: msg });
+    return;
+  }
 
-  let out = body && typeof body.output === 'string' ? body.output.trim() : '';
+  let out = body && typeof body.output === 'string' ? (body.output as string).trim() : '';
   if (!out) {
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     out = path.join(os.homedir(), '.grok-remote', `leader-profile-${pid}-${ts}.pprof`);
@@ -120,8 +125,4 @@ async function handleProfileStop(req, res, _url, params) {
   } catch (err) {
     send(res, 502, errorToResponse(err));
   }
-}
-
-function isValidPid(s) {
-  return typeof s === 'string' && /^[0-9]+$/.test(s);
 }

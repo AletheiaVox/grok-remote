@@ -112,19 +112,19 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 
 | Status | File                                | Target                              |
 |--------|-------------------------------------|--------------------------------------|
-| [ ]    | lib/routes/helpers.js               | lib/routes/helpers.ts                |
-| [ ]    | lib/routes/system.js                | lib/routes/system.ts                 |
-| [ ]    | lib/routes/system/agents.js         | lib/routes/system/agents.ts          |
-| [ ]    | lib/routes/system/health.js         | lib/routes/system/health.ts          |
-| [ ]    | lib/routes/system/import.js         | lib/routes/system/import.ts          |
-| [ ]    | lib/routes/system/leaders.js        | lib/routes/system/leaders.ts         |
-| [ ]    | lib/routes/system/mcp.js            | lib/routes/system/mcp.ts             |
-| [ ]    | lib/routes/system/memory.js         | lib/routes/system/memory.ts          |
-| [ ]    | lib/routes/system/models.js         | lib/routes/system/models.ts          |
-| [ ]    | lib/routes/system/sessions.js       | lib/routes/system/sessions.ts        |
-| [ ]    | lib/routes/system/setup.js          | lib/routes/system/setup.ts           |
+| [x]    | lib/routes/helpers.js               | lib/routes/helpers.ts                |
+| [x]    | lib/routes/system.js                | lib/routes/system.ts                 |
+| [x]    | lib/routes/system/agents.js         | lib/routes/system/agents.ts          |
+| [x]    | lib/routes/system/health.js         | lib/routes/system/health.ts          |
+| [x]    | lib/routes/system/import.js         | lib/routes/system/import.ts          |
+| [x]    | lib/routes/system/leaders.js        | lib/routes/system/leaders.ts         |
+| [x]    | lib/routes/system/mcp.js            | lib/routes/system/mcp.ts             |
+| [x]    | lib/routes/system/memory.js         | lib/routes/system/memory.ts          |
+| [x]    | lib/routes/system/models.js         | lib/routes/system/models.ts          |
+| [x]    | lib/routes/system/sessions.js       | lib/routes/system/sessions.ts        |
+| [x]    | lib/routes/system/setup.js          | lib/routes/system/setup.ts           |
 | [ ]    | lib/routes/system/skills.js         | lib/routes/system/skills.ts          |
-| [ ]    | lib/routes/system/worktrees.js      | lib/routes/system/worktrees.ts       |
+| [x]    | lib/routes/system/worktrees.js      | lib/routes/system/worktrees.ts       |
 
 ### Phase 4 — top-level server / installer / bin
 

@@ -1,23 +1,13 @@
-// worktrees routes. See docs/worktree.md.
-//
-// Registered routes:
-//   GET    /api/system/worktrees                  -> list (with ?all, ?repo, ?type)
-//   GET    /api/system/worktrees/db/stats         -> db stats text
-//   GET    /api/system/worktrees/db/path          -> db path text
-//   POST   /api/system/worktrees/db/rebuild       -> rebuild index
-//   POST   /api/system/worktrees/gc               -> garbage collect
-//   GET    /api/system/worktrees/:id              -> show one (text)
-//   DELETE /api/system/worktrees/:id              -> rm one
-//
-// All grok invocations go through lib/grok-cli.js.
+// worktrees routes.
+
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { send, readJsonBody } from '../helpers.js';
 import { runGrok, runGrokJson, runGrokText, errorToResponse } from '../../grok-cli.js';
+import type { RouteRegistrar, RouteParams } from '../system.js';
 
-export function register(add) {
+export function register(add: RouteRegistrar): void {
   add('GET',    '/api/system/worktrees',              handleList);
-  // Literal db endpoints registered with exact paths so the dispatcher's
-  // exact-key lookup wins over the `:id` parameterized pattern.
   add('GET',    '/api/system/worktrees/db/stats',     handleDbStats);
   add('GET',    '/api/system/worktrees/db/path',      handleDbPath);
   add('POST',   '/api/system/worktrees/db/rebuild',   handleDbRebuild);
@@ -26,7 +16,13 @@ export function register(add) {
   add('DELETE', '/api/system/worktrees/:id',          handleRm);
 }
 
-async function handleList(req, res, url) {
+function isValidId(s: unknown): s is string {
+  if (typeof s !== 'string' || !s.length) return false;
+  if (/[\s;&|`$<>"'\\]/.test(s)) return false;
+  return true;
+}
+
+async function handleList(_req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const args = ['worktree', 'list', '--json'];
   const params = url && url.searchParams ? url.searchParams : new URLSearchParams();
   if (params.get('all') === '1') args.push('--all');
@@ -42,8 +38,8 @@ async function handleList(req, res, url) {
   }
 }
 
-async function handleShow(req, res, _url, params) {
-  const id = (params && params.id) || '';
+async function handleShow(_req: IncomingMessage, res: ServerResponse, _url: URL, params?: RouteParams): Promise<void> {
+  const id = (params && params['id']) || '';
   if (!isValidId(id)) {
     send(res, 400, { ok: false, error: 'invalid worktree id' });
     return;
@@ -56,8 +52,8 @@ async function handleShow(req, res, _url, params) {
   }
 }
 
-async function handleRm(req, res, url, params) {
-  const id = (params && params.id) || '';
+async function handleRm(_req: IncomingMessage, res: ServerResponse, url: URL, params?: RouteParams): Promise<void> {
+  const id = (params && params['id']) || '';
   if (!isValidId(id)) {
     send(res, 400, { ok: false, error: 'invalid worktree id' });
     return;
@@ -75,10 +71,20 @@ async function handleRm(req, res, url, params) {
   }
 }
 
-async function handleGc(req, res) {
-  let body = {};
-  try { body = await readJsonBody(req); }
-  catch (err) { send(res, 400, { ok: false, error: err.message }); return; }
+interface GcBody {
+  dryRun?: boolean;
+  force?: boolean;
+  maxAge?: string;
+}
+
+async function handleGc(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: GcBody = {};
+  try { body = (await readJsonBody(req) || {}) as GcBody; }
+  catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    send(res, 400, { ok: false, error: msg });
+    return;
+  }
 
   const args = ['worktree', 'gc'];
   if (body && body.dryRun) args.push('--dry-run');
@@ -99,7 +105,7 @@ async function handleGc(req, res) {
   }
 }
 
-async function handleDbStats(req, res) {
+async function handleDbStats(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const output = await runGrokText(['worktree', 'db', 'stats']);
     send(res, 200, { ok: true, output });
@@ -108,7 +114,7 @@ async function handleDbStats(req, res) {
   }
 }
 
-async function handleDbPath(req, res) {
+async function handleDbPath(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const output = await runGrokText(['worktree', 'db', 'path']);
     send(res, 200, { ok: true, output: output.trim() });
@@ -117,20 +123,11 @@ async function handleDbPath(req, res) {
   }
 }
 
-async function handleDbRebuild(req, res) {
+async function handleDbRebuild(_req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const output = await runGrokText(['worktree', 'db', 'rebuild']);
     send(res, 200, { ok: true, output });
   } catch (err) {
     send(res, 502, errorToResponse(err));
   }
-}
-
-function isValidId(s) {
-  // Worktree ids are alphanumeric / underscore / dash (e.g. wt_01H...).
-  // Also allow absolute paths since show/rm accept either; but reject
-  // anything with shell metacharacters.
-  if (typeof s !== 'string' || !s.length) return false;
-  if (/[\s;&|`$<>"'\\]/.test(s)) return false;
-  return true;
 }
