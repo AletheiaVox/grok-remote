@@ -8,7 +8,7 @@
 
 import { api } from '../lib/api.js';
 import { el } from '../lib/render.js';
-import { fmtTokens } from '../lib/format.js';
+import { fmtTokens } from '../lib/format';
 
 const STATUS_LABEL = {
   idle:         'idle',

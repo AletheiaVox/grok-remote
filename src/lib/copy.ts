@@ -10,9 +10,8 @@
 // serializeResumeCommand(agent): renders the "Resume on CLI" instructions
 //   that get pasted into a terminal.
 
-export async function copyToClipboard(text) {
-  if (text == null) text = '';
-  const s = String(text);
+export async function copyToClipboard(text: unknown): Promise<boolean> {
+  const s = text == null ? '' : String(text);
   if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(s);
@@ -41,23 +40,51 @@ export async function copyToClipboard(text) {
   }
 }
 
-// Concatenated text from an assistant bubble or thinking pane.
-function bubbleText(b) {
+// Public structural shapes for the conversation serializer.
+export interface ConvoBubble {
+  text?: string | (() => string);
+}
+
+export interface ConvoToolEntry {
+  card?: {
+    node?: { querySelector?: (sel: string) => Element | null } | null;
+  } | null;
+}
+
+export interface ConvoTurn {
+  userText?: string;
+  user?: HTMLElement | { querySelector?: (sel: string) => Element | null; textContent?: string | null } | null;
+  thinking?: ConvoBubble | null;
+  tools?: ConvoToolEntry[] | null;
+  assistant?: ConvoBubble | null;
+}
+
+export interface ConvoAgent {
+  id?: string | null;
+  name?: string | null;
+  model?: string | null;
+  sessionId?: string | null;
+  cwd?: string | null;
+}
+
+export interface ConvoCtx {
+  agent?: ConvoAgent | null;
+}
+
+function bubbleText(b: ConvoBubble | null | undefined): string {
   if (!b) return '';
   if (typeof b.text === 'function') {
-    try { return b.text() || ''; } catch {}
+    try { return b.text() || ''; } catch { /* ignore */ }
   }
   if (typeof b.text === 'string') return b.text;
   return '';
 }
 
-function userText(turn) {
-  // The user bubble is a DOM node; grab its body text. Fall back to a
-  // stashed string if the caller saved one.
+function userText(turn: ConvoTurn | null | undefined): string {
   if (!turn) return '';
   if (typeof turn.userText === 'string') return turn.userText;
-  const node = turn.user;
-  if (node && node.querySelector) {
+  const node = turn.user as { querySelector?: (sel: string) => Element | null; textContent?: string | null } | null | undefined;
+  if (node && typeof node.querySelector === 'function') {
     const body = node.querySelector('.msg-body');
     if (body) return (body.textContent || '').trim();
   }
@@ -65,45 +92,45 @@ function userText(turn) {
   return '';
 }
 
-function toolTitle(t) {
+function toolTitle(t: ConvoToolEntry | null | undefined): string {
   if (!t || !t.card) return 'tool call';
   const node = t.card.node;
-  if (node && node.querySelector) {
+  if (node && typeof node.querySelector === 'function') {
     const titleEl = node.querySelector('.tool-title');
     if (titleEl) return (titleEl.textContent || 'tool call').trim();
   }
   return 'tool call';
 }
 
-function toolRawInputJson(t) {
+function toolRawInputJson(t: ConvoToolEntry | null | undefined): string {
   if (!t || !t.card) return '';
   const node = t.card.node;
-  if (node && node.querySelector) {
+  if (node && typeof node.querySelector === 'function') {
     const body = node.querySelector('.tool-raw-body');
     if (body) return (body.textContent || '').trim();
   }
   return '';
 }
 
-function toolOutput(t) {
+function toolOutput(t: ConvoToolEntry | null | undefined): string {
   if (!t || !t.card) return '';
   const node = t.card.node;
-  if (node && node.querySelector) {
+  if (node && typeof node.querySelector === 'function') {
     const body = node.querySelector('.tool-output-body');
     if (body) return (body.textContent || '').trim();
   }
   return '';
 }
 
-function indent(text, prefix) {
+function indent(text: string, prefix: string): string {
   if (!text) return '';
-  return String(text).split('\n').map(l => prefix + l).join('\n');
+  return String(text).split('\n').map((l) => prefix + l).join('\n');
 }
 
-export function serializeConversation(turns, ctx) {
-  const agent = (ctx && ctx.agent) || {};
+export function serializeConversation(turns: ConvoTurn[] | null | undefined, ctx?: ConvoCtx | null): string {
+  const agent: ConvoAgent = (ctx && ctx.agent) || {};
   const captured = new Date().toISOString();
-  const lines = [];
+  const lines: string[] = [];
   lines.push(`# Conversation with ${agent.name || agent.id || 'agent'}`);
   if (agent.model) lines.push(`# Model: ${agent.model}`);
   if (agent.sessionId) lines.push(`# Session: ${agent.sessionId}`);
@@ -161,8 +188,8 @@ export function serializeConversation(turns, ctx) {
   return lines.join('\n') + '\n';
 }
 
-export function serializeResumeCommand(agent) {
-  const a = agent || {};
+export function serializeResumeCommand(agent: ConvoAgent | null | undefined): string {
+  const a: ConvoAgent = agent || {};
   const sid = a.sessionId || '<sessionId>';
   const cwd = a.cwd || '<cwd>';
   const lines = [

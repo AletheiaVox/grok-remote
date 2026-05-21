@@ -8,15 +8,25 @@
     "install:setup": "node installer.js",
     "start": "node server.js",
     "dev": "vite",
-    "test": "node --test",
+    "dev:server": "tsx watch server.ts",
+    "test": "node --test --import tsx --test-reporter spec test/**/*.test.{js,ts}",
+    "test:integration": "RUN_LOCAL_INTEGRATION=1 node --test --import tsx test/integration/**/*.test.ts",
     "build": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop grok-remote",
     "pm2:restart": "pm2 restart grok-remote",
     "pm2:logs": "pm2 logs grok-remote"
   },
   "devDependencies": {
+    "@types/dagre": "^0.7.52",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
     "vite": "^5.4.10"
   },
   "engines": {

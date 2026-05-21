@@ -10,7 +10,17 @@
 const STORAGE_KEY = 'grok-remote.theme';
 const DEFAULT_THEME = 'dark';
 
-export const THEMES = [
+export interface Theme {
+  name:   string;
+  label:  string;
+  blurb:  string;
+  accent: string;
+  swatch: string;
+}
+
+export type ThemeName = 'dark' | 'light' | 'hacker' | 'unicorn';
+
+export const THEMES: Theme[] = [
   {
     name:    'dark',
     label:   'dark',
@@ -41,28 +51,28 @@ export const THEMES = [
   },
 ];
 
-const NAMES = THEMES.map(t => t.name);
+const NAMES: string[] = THEMES.map((t) => t.name);
 
-function isValid(name) {
+function isValid(name: unknown): name is string {
   return typeof name === 'string' && NAMES.includes(name);
 }
 
-export function getTheme() {
+export function getTheme(): string {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
     if (isValid(v)) return v;
-  } catch {}
+  } catch { /* ignore */ }
   return DEFAULT_THEME;
 }
 
-export function setTheme(name) {
+export function setTheme(name: string): string {
   const n = isValid(name) ? name : DEFAULT_THEME;
-  try { localStorage.setItem(STORAGE_KEY, n); } catch {}
+  try { localStorage.setItem(STORAGE_KEY, n); } catch { /* ignore */ }
   applyTheme(n);
   return n;
 }
 
-export function applyTheme(name) {
+export function applyTheme(name: string): string {
   const n = isValid(name) ? name : DEFAULT_THEME;
   if (typeof document !== 'undefined' && document.documentElement) {
     document.documentElement.dataset.theme = n;
@@ -70,14 +80,14 @@ export function applyTheme(name) {
   return n;
 }
 
-export function nextTheme(current) {
+export function nextTheme(current: string): string {
   const cur = isValid(current) ? current : getTheme();
   const idx = NAMES.indexOf(cur);
-  const next = NAMES[(idx + 1) % NAMES.length];
+  const next = NAMES[(idx + 1) % NAMES.length] ?? DEFAULT_THEME;
   setTheme(next);
   return next;
 }
 
-export function getThemeMeta(name) {
-  return THEMES.find(t => t.name === name) || THEMES[0];
+export function getThemeMeta(name: string): Theme {
+  return THEMES.find((t) => t.name === name) ?? THEMES[0]!;
 }

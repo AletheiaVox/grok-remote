@@ -15,7 +15,7 @@ import { ChatView } from './views/chat.js';
 import { SettingsView } from './views/settings.js';
 import { el } from './lib/render.js';
 import { registerPwa } from './lib/pwa.js';
-import { applyTheme, getTheme, nextTheme, getThemeMeta } from './lib/themes.js';
+import { applyTheme, getTheme, nextTheme, getThemeMeta } from './lib/themes';
 import { installVersionFooter } from './lib/version-footer.js';
 import { SYSTEM_PAGES, getSystemPage, getSettingsPage } from './views/system/index.js';
 import { iconHtml } from './lib/icons.js';

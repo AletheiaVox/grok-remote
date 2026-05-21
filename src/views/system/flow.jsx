@@ -34,7 +34,7 @@ import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 
 import { api } from '../../lib/api.js';
-import { fmtTokens } from '../../lib/format.js';
+import { fmtTokens } from '../../lib/format';
 import { iconHtml } from '../../lib/icons.js';
 import { FloatingEdge } from './flow-floating-edge.jsx';
 

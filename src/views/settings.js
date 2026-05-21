@@ -14,7 +14,7 @@
 import { api } from '../lib/api.js';
 import { el } from '../lib/render.js';
 import { iconHtml } from '../lib/icons.js';
-import { THEMES, getTheme, setTheme } from '../lib/themes.js';
+import { THEMES, getTheme, setTheme } from '../lib/themes';
 import { SETTINGS_SECTIONS, getSettingsPage } from './system/index.js';
 
 function clampInt(raw, min, max, fallback) {

@@ -1,0 +1,32 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "noEmit": false,
+    "outDir": "build",
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "allowJs": true,
+    "isolatedModules": false
+  },
+  "include": [
+    "server.ts",
+    "installer.ts",
+    "server.js",
+    "installer.js",
+    "lib/**/*.ts",
+    "lib/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "src/**",
+    "test/**",
+    "public/**",
+    "experiments/**"
+  ]
+}

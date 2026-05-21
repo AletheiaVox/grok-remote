@@ -32,9 +32,9 @@ import {
   renderErrorBanner,
   renderToast,
 } from '../lib/render.js';
-import { copyToClipboard, serializeConversation, serializeResumeCommand } from '../lib/copy.js';
+import { copyToClipboard, serializeConversation, serializeResumeCommand } from '../lib/copy';
 import { iconHtml } from '../lib/icons.js';
-import { fmtTokens } from '../lib/format.js';
+import { fmtTokens } from '../lib/format';
 import { playIntro } from '../lib/intro-animation.js';
 
 export class ChatView {

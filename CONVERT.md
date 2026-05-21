@@ -1,0 +1,239 @@
+# TypeScript conversion plan
+
+This document tracks the full migration of grok-remote from JavaScript /
+JSX to TypeScript. Each file is listed with its target file name, the
+phase it lands in, and a status flag. Iterations of `/loop 15m …`
+should pick up where the previous one left off; the status table is
+the source of truth.
+
+## Goals
+
+- Every file in `src/`, `lib/`, `server.js`, `installer.js`, `bin/`,
+  and `test/` lands in TypeScript with explicit types on public APIs.
+- Strict mode enabled (`strict: true`, `noUncheckedIndexedAccess: true`).
+- `npm run build` still produces a working frontend bundle.
+- `npm test` keeps passing the existing 24 unit tests and gains new
+  coverage as files are converted.
+- Optional integration tests boot the server binary and curl the
+  public endpoints (`/api/health`, `/api/version/*`, `/api/agents`, ...);
+  these run locally only because they need a logged-in `grok` CLI.
+
+## Tooling decisions
+
+- **Frontend**: Vite handles `.ts` and `.tsx` natively; no build script
+  changes required beyond extension renames. `@vitejs/plugin-react`
+  is already installed and handles JSX/TSX (flow page).
+- **Backend**: compile with `tsc` to `build/` (CommonJS-shaped ESM,
+  preserving `"type": "module"` in package.json). Use `tsx` for dev so
+  `npm run dev:server` can run TS directly without a build step. Prod
+  scripts (`pm2:start`, `gr start`) point at `build/server.js`.
+- **Module shape**: `"module": "NodeNext"` for `lib/**` (so we keep the
+  `.js` extension in imports, matching Node's resolution). Frontend
+  uses `"module": "ESNext"` with `"moduleResolution": "bundler"`.
+- **Strictness**: `strict: true`, `noUncheckedIndexedAccess: true`,
+  `noImplicitOverride: true`. Leave `allowJs: true` during migration
+  so unconverted files still type-check at the import surface; flip
+  to `false` once everything is `.ts`.
+- **Tests**: keep `node --test` runner. Convert `.test.js` to
+  `.test.ts`, run through `tsx --test`. Add a new
+  `test/integration/*.test.ts` that boots `build/server.js` via
+  `spawn`, polls `/api/health`, and exercises a few endpoints.
+
+## Phase order
+
+Lowest-blast-radius first. Each phase commits at least once so we can
+bisect if anything regresses.
+
+| Phase | Scope                                                  |
+|-------|--------------------------------------------------------|
+| 0     | tsconfig, deps, scripts, smoke build                   |
+| 1     | leaf utilities (no internal deps)                      |
+| 2     | server-side support libs                               |
+| 3     | server route handlers                                  |
+| 4     | top-level server / installer / bin                     |
+| 5     | frontend lib + small views                             |
+| 6     | system pages                                           |
+| 7     | the heavy hitters (chat.js, render.js, flow.jsx)       |
+| 8     | tests: convert + expand                                |
+| 9     | integration tests against the running binary           |
+| 10    | flip allowJs off, final sweep, delete dead JS          |
+
+## File inventory
+
+Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
+`[skip]` keep as-is (e.g. CommonJS config, service worker).
+
+### Phase 0 — config
+
+| Status | File                          | Target                          | Notes |
+|--------|-------------------------------|----------------------------------|-------|
+| [x]    | tsconfig.json (new)           | tsconfig.json                    | strict, NodeNext for lib, bundler for src |
+| [x]    | tsconfig.server.json (new)    | for `tsc` emit of backend        | extends root; `outDir: build` |
+| [x]    | package.json (edit)           | add scripts + devDeps            | typescript, tsx, @types/node, @types/react, @types/react-dom |
+| [skip] | ecosystem.config.cjs          | stays CommonJS                   | pm2 reads CJS; not worth converting |
+| [ ]    | vite.config.js                | vite.config.ts                   | trivial |
+
+### Phase 1 — leaf utilities
+
+| Status | File                          | Target                          |
+|--------|-------------------------------|----------------------------------|
+| [x]    | src/lib/format.js             | src/lib/format.ts                |
+| [x]    | src/lib/themes.js             | src/lib/themes.ts                |
+| [x]    | src/lib/copy.js               | src/lib/copy.ts                  |
+| [ ]    | src/lib/icons.js              | src/lib/icons.ts                 |
+| [ ]    | src/lib/sse.js                | src/lib/sse.ts                   |
+| [ ]    | src/lib/pwa.js                | src/lib/pwa.ts                   |
+| [ ]    | src/lib/image-lightbox.js     | src/lib/image-lightbox.ts        |
+| [ ]    | src/lib/intro-animation.js    | src/lib/intro-animation.ts       |
+| [ ]    | src/lib/slash-palette.js      | src/lib/slash-palette.ts         |
+| [ ]    | src/lib/attach-images.js      | src/lib/attach-images.ts         |
+| [ ]    | lib/sse.js                    | lib/sse.ts                       |
+| [ ]    | lib/install-mode.js           | lib/install-mode.ts              |
+| [ ]    | lib/launch.js                 | lib/launch.ts                    |
+| [ ]    | lib/dev-url.js                | lib/dev-url.ts                   |
+| [ ]    | lib/retention.js              | lib/retention.ts                 |
+
+### Phase 2 — server-side support libs
+
+| Status | File                          | Target                          |
+|--------|-------------------------------|----------------------------------|
+| [ ]    | lib/settings.js               | lib/settings.ts                  |
+| [ ]    | lib/history.js                | lib/history.ts                   |
+| [ ]    | lib/version-update.js         | lib/version-update.ts            |
+| [ ]    | lib/grok-cli.js               | lib/grok-cli.ts                  |
+| [ ]    | lib/acp-client.js             | lib/acp-client.ts                |
+| [ ]    | lib/fs-host.js                | lib/fs-host.ts                   |
+| [ ]    | lib/terminal-host.js          | lib/terminal-host.ts             |
+| [ ]    | lib/permission-host.js        | lib/permission-host.ts           |
+| [ ]    | lib/trace-host.js             | lib/trace-host.ts                |
+| [ ]    | lib/agent-manager.js          | lib/agent-manager.ts             |
+
+### Phase 3 — server route handlers
+
+| Status | File                                | Target                              |
+|--------|-------------------------------------|--------------------------------------|
+| [ ]    | lib/routes/helpers.js               | lib/routes/helpers.ts                |
+| [ ]    | lib/routes/system.js                | lib/routes/system.ts                 |
+| [ ]    | lib/routes/system/agents.js         | lib/routes/system/agents.ts          |
+| [ ]    | lib/routes/system/health.js         | lib/routes/system/health.ts          |
+| [ ]    | lib/routes/system/import.js         | lib/routes/system/import.ts          |
+| [ ]    | lib/routes/system/leaders.js        | lib/routes/system/leaders.ts         |
+| [ ]    | lib/routes/system/mcp.js            | lib/routes/system/mcp.ts             |
+| [ ]    | lib/routes/system/memory.js         | lib/routes/system/memory.ts          |
+| [ ]    | lib/routes/system/models.js         | lib/routes/system/models.ts          |
+| [ ]    | lib/routes/system/sessions.js       | lib/routes/system/sessions.ts        |
+| [ ]    | lib/routes/system/setup.js          | lib/routes/system/setup.ts           |
+| [ ]    | lib/routes/system/skills.js         | lib/routes/system/skills.ts          |
+| [ ]    | lib/routes/system/worktrees.js      | lib/routes/system/worktrees.ts       |
+
+### Phase 4 — top-level server / installer / bin
+
+| Status | File                          | Target                          |
+|--------|-------------------------------|----------------------------------|
+| [ ]    | server.js                     | server.ts                        |
+| [ ]    | installer.js                  | installer.ts                     |
+| [ ]    | bin/gr                        | bin/gr (shebang `node`, stays JS or compiled .ts) |
+| [skip] | public/sw.js                  | service worker, browser-served as-is |
+| [skip] | experiments/probe.js          | one-off scratch, leave alone     |
+
+### Phase 5 — frontend lib + small views
+
+| Status | File                              | Target                              |
+|--------|-----------------------------------|--------------------------------------|
+| [ ]    | src/lib/api.js                    | src/lib/api.ts                       |
+| [ ]    | src/lib/version-footer.js         | src/lib/version-footer.ts            |
+| [ ]    | src/views/changelog-modal.js      | src/views/changelog-modal.ts         |
+| [ ]    | src/views/update-modal.js         | src/views/update-modal.ts            |
+| [ ]    | src/views/settings.js             | src/views/settings.ts                |
+| [ ]    | src/views/files.js                | src/views/files.ts                   |
+| [ ]    | src/views/agents.js               | src/views/agents.ts                  |
+| [ ]    | src/views/trace.js                | src/views/trace.ts                   |
+
+### Phase 6 — system pages
+
+| Status | File                                  | Target                                  |
+|--------|---------------------------------------|------------------------------------------|
+| [ ]    | src/views/system/index.js             | src/views/system/index.ts                |
+| [ ]    | src/views/system/_native_common.js    | src/views/system/_native_common.ts       |
+| [ ]    | src/views/system/agents.js            | src/views/system/agents.ts               |
+| [ ]    | src/views/system/health.js            | src/views/system/health.ts               |
+| [ ]    | src/views/system/hooks.js             | src/views/system/hooks.ts                |
+| [ ]    | src/views/system/import.js            | src/views/system/import.ts               |
+| [ ]    | src/views/system/leaders.js           | src/views/system/leaders.ts              |
+| [ ]    | src/views/system/lsp.js               | src/views/system/lsp.ts                  |
+| [ ]    | src/views/system/marketplaces.js      | src/views/system/marketplaces.ts         |
+| [ ]    | src/views/system/mcp.js               | src/views/system/mcp.ts                  |
+| [ ]    | src/views/system/memory.js            | src/views/system/memory.ts               |
+| [ ]    | src/views/system/models.js            | src/views/system/models.ts               |
+| [ ]    | src/views/system/plugins.js           | src/views/system/plugins.ts              |
+| [ ]    | src/views/system/sessions.js          | src/views/system/sessions.ts             |
+| [ ]    | src/views/system/setup.js             | src/views/system/setup.ts                |
+| [ ]    | src/views/system/skills.js            | src/views/system/skills.ts               |
+| [ ]    | src/views/system/worktrees.js         | src/views/system/worktrees.ts            |
+| [ ]    | src/views/system/flow.js              | src/views/system/flow.ts                 |
+| [ ]    | src/views/system/flow.jsx             | src/views/system/flow.tsx                |
+| [ ]    | src/views/system/flow-floating-edge.jsx | src/views/system/flow-floating-edge.tsx |
+
+### Phase 7 — heavy hitters
+
+| Status | File                          | Target                          |
+|--------|-------------------------------|----------------------------------|
+| [ ]    | src/lib/render.js             | src/lib/render.ts                |
+| [ ]    | src/views/chat.js             | src/views/chat.ts                |
+| [ ]    | src/main.js                   | src/main.ts                      |
+
+### Phase 8 — tests
+
+| Status | File                                  | Target                                  |
+|--------|---------------------------------------|------------------------------------------|
+| [ ]    | test/install-mode.test.js             | test/install-mode.test.ts                |
+| [ ]    | test/launch.test.js                   | test/launch.test.ts                      |
+| [ ]    | test/user-attachments.test.js         | test/user-attachments.test.ts            |
+| [ ]    | (new)                                 | test/render-todo.test.ts                 |
+| [ ]    | (new)                                 | test/render-attachments.test.ts          |
+| [ ]    | (new)                                 | test/agent-manager.test.ts               |
+| [ ]    | (new)                                 | test/version-update.test.ts              |
+| [ ]    | (new)                                 | test/routes-system.test.ts               |
+
+### Phase 9 — integration tests against the running binary
+
+Tests under `test/integration/` boot the compiled server via
+`spawn(process.execPath, ['build/server.js'], ...)`, wait for
+`/api/health` to return 200, then drive a handful of public
+endpoints. They are skipped on CI (gated on
+`process.env.RUN_LOCAL_INTEGRATION === '1'`) because they need a
+logged-in `grok` CLI on the host.
+
+| Status | Endpoint                            |
+|--------|--------------------------------------|
+| [ ]    | GET /api/health                      |
+| [ ]    | GET /api/version/current             |
+| [ ]    | GET /api/version/latest              |
+| [ ]    | GET /api/version/releases            |
+| [ ]    | GET /api/agents                      |
+| [ ]    | GET /api/agents/stream (SSE smoke)   |
+| [ ]    | GET /api/settings, PATCH /api/settings |
+| [ ]    | GET /api/system/health               |
+
+### Phase 10 — final sweep
+
+- [ ] turn off `allowJs` in tsconfig
+- [ ] delete any remaining `.js` files in `src/` and `lib/`
+- [ ] update README's repo layout section
+- [ ] document local integration test runner in README
+
+## How to iterate
+
+When `/loop 15m …` fires:
+
+1. Pull the latest from the branch (we never push, but local commits accumulate).
+2. Open this file and find the **first row whose status is `[ ]`**.
+3. Convert that file (or batch of small ones). Add explicit types on
+   exports; let inference handle locals.
+4. Run `npm run build` and `npm test` before flipping the status.
+5. Flip the row to `[x]`, commit with a clear message, do NOT push.
+6. If a file is blocked (needs another file converted first), mark it
+   `[!]` with a one-line note and move on to the next.
+
+This file IS the work queue. Don't rely on chat memory between
+iterations.
