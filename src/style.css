@@ -8462,3 +8462,130 @@ body::before {
   color: var(--dim);
   text-decoration: line-through;
 }
+
+/* ---------------------------------------------------------------------- */
+/* Sidebar folders + drag/drop + inline rename                            */
+/* ---------------------------------------------------------------------- */
+
+.agents-new-folder-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--border-2);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.agents-new-folder-btn:hover { color: var(--text); border-color: var(--teal); }
+
+.folder-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.folder-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.folder-header:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.folder-header--top  { background: transparent; }
+.folder-header--drop {
+  border-color: var(--teal);
+  background: rgba(94, 234, 212, 0.10);
+  color: var(--text);
+}
+
+.folder-caret {
+  display: inline-block;
+  width: 10px;
+  font-size: 10px;
+  color: var(--dim);
+}
+.folder-name {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-count {
+  color: var(--dim);
+  font-size: 10px;
+}
+.folder-delete {
+  background: transparent;
+  border: none;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.folder-delete:hover { color: var(--amber); background: rgba(252, 168, 84, 0.10); }
+
+.folder-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  margin-left: 6px;
+}
+
+.folder-empty {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  text-align: center;
+}
+
+.folder-rename-input,
+.agent-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--teal);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.agent-item--dragging { opacity: 0.35; }
+.agent-drag-ghost {
+  box-shadow: 0 8px 20px rgba(0,0,0,0.45);
+  transform: rotate(-1deg);
+}
+
+/* Touch surface: the row needs to absorb touch so we can recognise a
+   long-press without the browser turning it into a text selection. The
+   sidebar scroll container still scrolls because we bail out of the drag
+   on vertical movement. */
+.agent-item {
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
