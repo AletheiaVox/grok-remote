@@ -1,18 +1,12 @@
 // Self-update orchestration for grok-remote.
 //
 // Backs the /api/version/* endpoints in server.js:
-//   - readCurrentVersion(): snapshot of the running build (pkg version, git
-//     HEAD sha, branch, dirty flag, dist/ mtime).
-//   - readLatestVersion(): fetches origin/main and reports ahead/behind plus
-//     the remote package.json version.
+//   - readCurrentVersion(): snapshot of the running build.
+//   - readLatestVersion(): fetches origin/main and reports ahead/behind.
 //   - runUpdate(): SSE-friendly state machine that pulls, optionally
 //     installs deps, builds, then asks pm2 to restart this very process.
-//
-// Everything shells out via spawn (never execSync) so we can stream stderr
-// and stdout into the SSE response. A single in-process lock prevents
-// concurrent updates; the lock is released on completion OR failure.
 
-import { spawn } from 'node:child_process';
+import { spawn, type SpawnOptions } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,32 +14,42 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
-// In-process re-entry lock. true while an update is mid-flight.
 let updateInProgress = false;
 
-export function isUpdateInProgress() {
+export function isUpdateInProgress(): boolean {
   return updateInProgress;
 }
 
-// Run a one-shot command and return { code, stdout, stderr }. Never throws
-// on a non-zero exit; the caller decides what counts as failure.
-function runCapture(cmd, args, { cwd = ROOT, timeoutMs = 30_000, env } = {}) {
-  return new Promise((resolve) => {
+interface CaptureResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+interface CaptureOptions {
+  cwd?: string;
+  timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+}
+
+function runCapture(cmd: string, args: string[], opts: CaptureOptions = {}): Promise<CaptureResult> {
+  const { cwd = ROOT, timeoutMs = 30_000, env } = opts;
+  return new Promise<CaptureResult>((resolve) => {
     const child = spawn(cmd, args, {
       cwd,
       env: env || process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const outChunks = [];
-    const errChunks = [];
+    const outChunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
     let timedOut = false;
     const t = setTimeout(() => {
       timedOut = true;
       try { child.kill('SIGTERM'); } catch { /* ignore */ }
     }, timeoutMs);
-    child.stdout.on('data', (b) => outChunks.push(b));
-    child.stderr.on('data', (b) => errChunks.push(b));
-    child.on('error', (err) => {
+    child.stdout?.on('data', (b: Buffer) => outChunks.push(b));
+    child.stderr?.on('data', (b: Buffer) => errChunks.push(b));
+    child.on('error', (err: Error) => {
       clearTimeout(t);
       resolve({ code: -1, stdout: '', stderr: String(err && err.message || err) });
     });
@@ -60,33 +64,40 @@ function runCapture(cmd, args, { cwd = ROOT, timeoutMs = 30_000, env } = {}) {
   });
 }
 
-function readPkgVersion() {
+function readPkgVersion(): string {
   try {
     const raw = fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8');
-    const pkg = JSON.parse(raw);
+    const pkg = JSON.parse(raw) as { version?: string };
     return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
   } catch { return '0.0.0'; }
 }
 
-function readDistBuiltAt() {
-  // dist/ mtime is the closest we have to "when this binary was built".
+function readDistBuiltAt(): string | null {
   try {
     const st = fs.statSync(path.join(ROOT, 'dist'));
     return st.mtime.toISOString();
   } catch { return null; }
 }
 
-export async function readCurrentVersion() {
+export interface CurrentVersion {
+  ok: true;
+  version: string;
+  pkgVersion: string;
+  gitTag: string | null;
+  gitSha: string | null;
+  gitShaShort: string | null;
+  gitBranch: string | null;
+  gitDirty: boolean | null;
+  builtAt: string | null;
+}
+
+export async function readCurrentVersion(): Promise<CurrentVersion> {
   const pkgVersion = readPkgVersion();
   const builtAt = readDistBuiltAt();
 
   const sha    = await runCapture('git', ['rev-parse', 'HEAD'], { timeoutMs: 5000 });
   const branch = await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 5000 });
   const dirty  = await runCapture('git', ['status', '--porcelain'], { timeoutMs: 5000 });
-  // Prefer the latest annotated tag as the displayed version. The release
-  // workflow tags every push to main, so this is the canonical "running
-  // build" identifier. Falls back to package.json when no tags exist yet
-  // (fresh clone, first install).
   const tag = await runCapture('git', ['describe', '--tags', '--abbrev=0'], { timeoutMs: 5000 });
   const tagStr = tag.code === 0 ? tag.stdout.trim() : '';
   const version = tagStr ? tagStr.replace(/^v/, '') : pkgVersion;
@@ -104,9 +115,19 @@ export async function readCurrentVersion() {
   };
 }
 
-export async function readLatestVersion() {
-  // Fetch quietly. Failing here is fine. We surface the error so the UI can
-  // say "could not reach origin" instead of silently claiming up-to-date.
+export type LatestVersion =
+  | { ok: false; error: string; detail?: string }
+  | {
+      ok: true;
+      ahead: number;
+      behind: number;
+      latestSha: string | null;
+      latestShaShort: string | null;
+      latestVersion: string | null;
+      fetchedAt: string;
+    };
+
+export async function readLatestVersion(): Promise<LatestVersion> {
   const fetched = await runCapture('git', ['fetch', 'origin', 'main', '--quiet'], { timeoutMs: 20_000 });
   if (fetched.code !== 0) {
     return {
@@ -129,10 +150,10 @@ export async function readLatestVersion() {
 
   const remoteSha = await runCapture('git', ['rev-parse', 'origin/main'], { timeoutMs: 5000 });
   const remotePkg = await runCapture('git', ['show', 'origin/main:package.json'], { timeoutMs: 5000 });
-  let latestVersion = null;
+  let latestVersion: string | null = null;
   if (remotePkg.code === 0) {
     try {
-      const parsed = JSON.parse(remotePkg.stdout);
+      const parsed = JSON.parse(remotePkg.stdout) as { version?: string };
       if (parsed && typeof parsed.version === 'string') latestVersion = parsed.version;
     } catch { /* ignore */ }
   }
@@ -148,38 +169,52 @@ export async function readLatestVersion() {
   };
 }
 
-// In-memory cache for the GitHub releases payload. The GitHub API gives us
-// 60 unauthenticated requests per hour per IP; with a 5-minute window we
-// can serve hundreds of dashboard loads without ever brushing that limit.
 const RELEASES_TTL_MS = 5 * 60 * 1000;
-let releasesCache = { at: 0, data: null, error: null };
 
-function repoSlugFromOriginUrl(originUrl) {
-  // Accepts both https://github.com/owner/repo[.git] and
-  // git@github.com:owner/repo[.git] and returns "owner/repo".
+export interface ReleaseSummary {
+  tag: string;
+  name: string;
+  url: string;
+  body: string;
+  publishedAt: string;
+  draft: boolean;
+  prerelease: boolean;
+}
+
+export type ReleasesResult =
+  | { ok: false; error: string; detail?: string; repo?: string }
+  | { ok: true; repo: string; releases: ReleaseSummary[]; fetchedAt: string };
+
+interface ReleasesCache {
+  at: number;
+  data: ReleasesResult | null;
+  error: string | null;
+}
+
+let releasesCache: ReleasesCache = { at: 0, data: null, error: null };
+
+function repoSlugFromOriginUrl(originUrl: string | null | undefined): string {
   if (!originUrl) return '';
   const m = originUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/i);
   return m ? `${m[1]}/${m[2]}` : '';
 }
 
-async function detectRepoSlug() {
-  const env = process.env.GROK_REMOTE_REPO;
+async function detectRepoSlug(): Promise<string> {
+  const env = process.env['GROK_REMOTE_REPO'];
   if (env && env.includes('/')) return env;
   const r = await runCapture('git', ['remote', 'get-url', 'origin'], { timeoutMs: 5000 });
   if (r.code !== 0) return '';
   return repoSlugFromOriginUrl(r.stdout.trim());
 }
 
-// Fetch the latest 20 GitHub releases for this repo, cached for 5 minutes.
-// Returns { ok, releases, repo, fetchedAt } or { ok:false, error, detail }.
-export async function readReleases({ force = false } = {}) {
+export async function readReleases({ force = false }: { force?: boolean } = {}): Promise<ReleasesResult> {
   const now = Date.now();
   if (!force && releasesCache.data && (now - releasesCache.at) < RELEASES_TTL_MS) {
     return releasesCache.data;
   }
   const repo = await detectRepoSlug();
   if (!repo) {
-    const out = { ok: false, error: 'no_repo', detail: 'could not detect GitHub repo from origin url' };
+    const out: ReleasesResult = { ok: false, error: 'no_repo', detail: 'could not detect GitHub repo from origin url' };
     releasesCache = { at: now, data: out, error: out.error };
     return out;
   }
@@ -194,7 +229,7 @@ export async function readReleases({ force = false } = {}) {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      const out = {
+      const out: ReleasesResult = {
         ok: false,
         error: `github_${res.status}`,
         detail: text.slice(0, 500),
@@ -203,17 +238,17 @@ export async function readReleases({ force = false } = {}) {
       releasesCache = { at: now, data: out, error: out.error };
       return out;
     }
-    const raw = await res.json();
-    const releases = (Array.isArray(raw) ? raw : []).map((r) => ({
-      tag: r.tag_name,
-      name: r.name || r.tag_name,
-      url: r.html_url,
-      body: r.body || '',
-      publishedAt: r.published_at,
-      draft: !!r.draft,
-      prerelease: !!r.prerelease,
+    const raw = await res.json() as Array<Record<string, unknown>>;
+    const releases: ReleaseSummary[] = (Array.isArray(raw) ? raw : []).map((r) => ({
+      tag: String(r['tag_name'] || ''),
+      name: String(r['name'] || r['tag_name'] || ''),
+      url: String(r['html_url'] || ''),
+      body: String(r['body'] || ''),
+      publishedAt: String(r['published_at'] || ''),
+      draft: !!r['draft'],
+      prerelease: !!r['prerelease'],
     }));
-    const out = {
+    const out: ReleasesResult = {
       ok: true,
       repo,
       releases,
@@ -222,15 +257,21 @@ export async function readReleases({ force = false } = {}) {
     releasesCache = { at: now, data: out, error: null };
     return out;
   } catch (err) {
-    const out = { ok: false, error: 'fetch_failed', detail: String(err && err.message || err) };
+    const msg = err instanceof Error ? err.message : String(err);
+    const out: ReleasesResult = { ok: false, error: 'fetch_failed', detail: msg };
     releasesCache = { at: now, data: out, error: out.error };
     return out;
   }
 }
 
-// Stream a `git diff` to the caller. Used when the working tree is dirty
-// so the modal can show the user what would block the update.
-export async function readDiff() {
+export interface DiffResult {
+  ok: boolean;
+  stat: string;
+  diff: string;
+  truncated: boolean;
+}
+
+export async function readDiff(): Promise<DiffResult> {
   const r = await runCapture('git', ['diff', '--stat', 'HEAD'], { timeoutMs: 10_000 });
   const full = await runCapture('git', ['diff', 'HEAD'], { timeoutMs: 10_000, env: { ...process.env, GIT_PAGER: 'cat' } });
   return {
@@ -241,39 +282,48 @@ export async function readDiff() {
   };
 }
 
-// Stream every step of an update as SSE events on `emit`. Resolves when
-// the pm2 restart command has been launched (the process may die mid-emit).
-export async function runUpdate({ emit, restart = true } = {}) {
+export interface UpdateStepEvent {
+  step: string;
+  status: 'start' | 'log' | 'ok' | 'fail' | 'skip';
+  detail: string;
+}
+
+export interface RunUpdateOptions {
+  emit?: (event: UpdateStepEvent) => void;
+  restart?: boolean;
+}
+
+export async function runUpdate({ emit, restart = true }: RunUpdateOptions = {}): Promise<void> {
   if (updateInProgress) {
-    throw Object.assign(new Error('update already in progress'), { code: 'IN_PROGRESS' });
+    const err = new Error('update already in progress') as Error & { code?: string };
+    err.code = 'IN_PROGRESS';
+    throw err;
   }
   updateInProgress = true;
 
-  function step(name, status, detail) {
-    try { emit({ step: name, status, detail }); } catch { /* socket may be gone */ }
+  function step(name: string, status: UpdateStepEvent['status'], detail: string): void {
+    try { emit?.({ step: name, status, detail }); } catch { /* socket may be gone */ }
   }
 
-  // Stream a child process's stdout/stderr into emit as chunks under the
-  // given step name. Resolves with the exit code. Each chunk gets its own
-  // SSE event so the client can render a live log without buffering.
-  function streamStep(name, cmd, args, opts = {}) {
-    return new Promise((resolve) => {
+  function streamStep(name: string, cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}): Promise<number> {
+    return new Promise<number>((resolve) => {
       step(name, 'start', `$ ${cmd} ${args.join(' ')}`);
-      const child = spawn(cmd, args, {
+      const spawnOpts: SpawnOptions = {
         cwd: opts.cwd || ROOT,
         env: opts.env || process.env,
         stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let timer = null;
+      };
+      const child = spawn(cmd, args, spawnOpts);
+      let timer: NodeJS.Timeout | null = null;
       if (opts.timeoutMs) {
         timer = setTimeout(() => {
           step(name, 'log', '[grok-remote] step timeout; killing.');
           try { child.kill('SIGTERM'); } catch { /* ignore */ }
         }, opts.timeoutMs);
       }
-      child.stdout.on('data', (b) => step(name, 'log', b.toString('utf8')));
-      child.stderr.on('data', (b) => step(name, 'log', b.toString('utf8')));
-      child.on('error', (err) => {
+      child.stdout?.on('data', (b: Buffer) => step(name, 'log', b.toString('utf8')));
+      child.stderr?.on('data', (b: Buffer) => step(name, 'log', b.toString('utf8')));
+      child.on('error', (err: Error) => {
         if (timer) clearTimeout(timer);
         step(name, 'fail', String(err && err.message || err));
         resolve(-1);
@@ -288,7 +338,6 @@ export async function runUpdate({ emit, restart = true } = {}) {
   }
 
   try {
-    // ── PREFLIGHT ───────────────────────────────────────────────────────
     step('preflight', 'start', 'checking repo state');
 
     const branch = await runCapture('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 5000 });
@@ -313,11 +362,9 @@ export async function runUpdate({ emit, restart = true } = {}) {
     }
     step('preflight', 'ok', 'clean working tree on main');
 
-    // ── FETCH ──────────────────────────────────────────────────────────
     const fetchCode = await streamStep('fetch', 'git', ['fetch', 'origin', 'main', '--quiet'], { timeoutMs: 60_000 });
     if (fetchCode !== 0) return;
 
-    // Recompute behind to decide whether there's anything to pull.
     const counts = await runCapture('git', ['rev-list', '--left-right', '--count', 'HEAD...origin/main'], { timeoutMs: 5000 });
     const behind = counts.code === 0 ? (parseInt(counts.stdout.trim().split(/\s+/)[1] || '0', 10) || 0) : 0;
     if (behind === 0) {
@@ -327,20 +374,15 @@ export async function runUpdate({ emit, restart = true } = {}) {
       return;
     }
 
-    // Capture pre-pull HEAD so we can diff lockfiles after.
     const preSha = await runCapture('git', ['rev-parse', 'HEAD'], { timeoutMs: 5000 });
     const preHead = preSha.code === 0 ? preSha.stdout.trim() : null;
 
-    // ── PULL ───────────────────────────────────────────────────────────
-    // --ff-only refuses if the pull would create a merge commit. That's
-    // exactly what we want: refuse and tell the user to resolve manually.
     const pullCode = await streamStep('pull', 'git', ['pull', '--ff-only', 'origin', 'main'], { timeoutMs: 60_000 });
     if (pullCode !== 0) {
       step('pull', 'log', 'fast-forward refused. the local branch likely diverged. resolve manually then retry.');
       return;
     }
 
-    // ── INSTALL (conditional) ──────────────────────────────────────────
     let depsChanged = false;
     if (preHead) {
       const diff = await runCapture('git', ['diff', '--name-only', `${preHead}..HEAD`], { timeoutMs: 5000 });
@@ -355,13 +397,9 @@ export async function runUpdate({ emit, restart = true } = {}) {
       step('install', 'skip', 'package.json and package-lock.json unchanged; skipping npm install.');
     }
 
-    // ── BUILD ──────────────────────────────────────────────────────────
     const buildCode = await streamStep('build', 'npm', ['run', 'build'], { timeoutMs: 5 * 60_000 });
     if (buildCode !== 0) return;
 
-    // ── RESTART ────────────────────────────────────────────────────────
-    // pm2 restart will kill THIS process. The SSE connection dies; the
-    // frontend polls /api/health until the new instance answers.
     step('restart', 'start', 'asking pm2 to restart grok-remote');
     if (!restart) {
       step('restart', 'skip', 'restart=false; not restarting.');
@@ -369,21 +407,18 @@ export async function runUpdate({ emit, restart = true } = {}) {
       return;
     }
 
-    // Spawn detached so the kill propagates cleanly even after we exit.
     const restartChild = spawn('pm2', ['restart', 'grok-remote', '--update-env'], {
       cwd: ROOT,
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
-    restartChild.stdout.on('data', (b) => step('restart', 'log', b.toString('utf8')));
-    restartChild.stderr.on('data', (b) => step('restart', 'log', b.toString('utf8')));
-    restartChild.on('error', (err) => {
+    restartChild.stdout?.on('data', (b: Buffer) => step('restart', 'log', b.toString('utf8')));
+    restartChild.stderr?.on('data', (b: Buffer) => step('restart', 'log', b.toString('utf8')));
+    restartChild.on('error', (err: Error) => {
       step('restart', 'fail', `pm2 spawn failed: ${err.message}`);
     });
     restartChild.unref();
-    // We deliberately do not await the pm2 child: the SSE writer should
-    // flush the "start" event before pm2 SIGTERMs us a moment later.
   } finally {
     updateInProgress = false;
   }

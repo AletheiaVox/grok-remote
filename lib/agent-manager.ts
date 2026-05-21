@@ -1,20 +1,4 @@
 // Registry of live AcpClient instances + per-agent SSE ring buffers and history.
-//
-// Persistence model:
-//   ~/.grok-remote/agents/<id>/meta.json     - hydrated on startup
-//   ~/.grok-remote/agents/<id>/history.jsonl - append-only event log
-//   ~/.grok-remote/agents/<id>/cwd/...       - agent's working directory
-//
-// Lifecycle states:
-//   starting   - process spawned, handshake in flight
-//   idle       - connected, ready for prompts
-//   running    - prompt in flight
-//   disconnected - process killed, but record (history + meta) kept
-//   errored    - failed handshake or fatal error
-//
-// Disconnecting an agent kills its grok process but keeps everything on disk.
-// Sending a new prompt to a disconnected agent transparently respawns and
-// attempts to resume the grok session via session/load.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,53 +6,151 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
-import { AcpClient } from './acp-client.js';
+import { AcpClient, type AcpClientSettings } from './acp-client.js';
 import { ensureAgentDirs, agentDir, historyPath, append as historyAppend } from './history.js';
-import { createRing } from './sse.js';
+import { createRing, type SseRing, type SseRingEntry } from './sse.js';
 
 const SSE_RING_LIMIT = 200;
 const AGENTS_ROOT = path.join(os.homedir(), '.grok-remote', 'agents');
 
-function nowIso() { return new Date().toISOString(); }
+function nowIso(): string { return new Date().toISOString(); }
 
-function countRunningBg(record) {
+export interface BgTask {
+  id: string;
+  tool_call_id: string | null;
+  command: string;
+  cwd: string;
+  output_file: string;
+  startedAt: number;
+  completed: boolean;
+  exit_code: number | null;
+  signal: NodeJS.Signals | string | null;
+  endedAt?: number;
+  kind: 'grok-bg';
+  cached_output?: string;
+}
+
+export interface AgentMeta {
+  id: string;
+  name: string;
+  autoNamed: boolean;
+  modelHint: string | null;
+  cwd: string;
+  createdAt: string;
+  lastSeen: string;
+  lastSessionId: string | null;
+  lastError: string | null;
+  starred: boolean;
+  archived: boolean;
+  archivedAt: string | null;
+  settings: AcpClientSettings | null;
+}
+
+interface AgentRingEntry extends SseRingEntry {
+  id: string;
+  event: string;
+  data: Record<string, unknown>;
+}
+
+interface AgentRecord extends AgentMeta {
+  client: AcpClient | null;
+  ring: SseRing<AgentRingEntry>;
+  status: string;
+  eventCounter: number;
+  bgTasks?: Map<string, BgTask>;
+  totalTokens?: number;
+  inFlight?: number;
+  _inFlightIds?: Set<string>;
+  _lastTokenEmit?: number;
+}
+
+export interface AgentSpawnOptions {
+  name?: string;
+  model?: string;
+  cwd?: string;
+  settings?: AcpClientSettings | null;
+}
+
+export interface AgentPatch {
+  name?: string;
+  starred?: boolean;
+  archived?: boolean;
+  settings?: AcpClientSettings | null;
+}
+
+export interface PublicAgent {
+  id: string;
+  name: string;
+  model: string | null;
+  status: string;
+  connected: boolean;
+  cwd: string;
+  createdAt: string;
+  lastSeen: string;
+  lastSessionId: string | null;
+  handshakeMeta: unknown;
+  agentCapabilities: unknown;
+  sessionId: string | null;
+  availableCommands: unknown[];
+  lastError: string | null;
+  exitInfo: unknown;
+  starred: boolean;
+  archived: boolean;
+  archivedAt: string | null;
+  settings: AcpClientSettings | null;
+  totalTokens: number;
+  inFlight: number;
+}
+
+export interface PromptAttachment {
+  name?: string;
+  mimeType?: string;
+  dataBase64?: string;
+}
+
+export interface PromptInput {
+  text?: string;
+  attachments?: PromptAttachment[];
+}
+
+interface SavedFile {
+  rel: string;
+  abs: string;
+  mimeType: string | null;
+  size: number;
+}
+
+function countRunningBg(record: AgentRecord | null | undefined): number {
   if (!record || !record.bgTasks) return 0;
   let n = 0;
   for (const v of record.bgTasks.values()) if (!v.completed) n++;
   return n;
 }
 
-// Replay history.jsonl for an agent to rebuild the bgTasks Map after a
-// server restart. We walk the file linearly and apply each event in order:
-// task_backgrounded adds, task_completed marks complete. Only the most
-// recent state per task_id wins.
-function hydrateBgTasksFromHistory(agentId) {
-  const out = new Map();
-  let raw;
+function hydrateBgTasksFromHistory(agentId: string): Map<string, BgTask> {
+  const out = new Map<string, BgTask>();
+  let raw: string;
   try { raw = fs.readFileSync(historyPath(agentId), 'utf8'); }
   catch { return out; }
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // Cheap pre-filter: most lines are irrelevant, so skip ones that don't
-    // mention any of the three event shapes we care about.
     if (trimmed.indexOf('task_backgrounded') === -1 &&
         trimmed.indexOf('task_completed')    === -1 &&
         trimmed.indexOf('TaskOutput')         === -1) continue;
-    let ev;
+    let ev: { at?: string; data?: { params?: { update?: Record<string, unknown> }; update?: Record<string, unknown> } };
     try { ev = JSON.parse(trimmed); } catch { continue; }
-    // x_notification path (task_backgrounded / task_completed)
-    const upd = ev && ev.data && ev.data.params && ev.data.params.update;
-    if (upd && upd.sessionUpdate === 'task_backgrounded') {
-      const tid = upd.task_id;
+    const upd = ev?.data?.params?.update;
+    if (upd && upd['sessionUpdate'] === 'task_backgrounded') {
+      const tid = upd['task_id'] as string | undefined;
       if (!tid) continue;
       out.set(tid, {
         id: tid,
-        tool_call_id: upd.tool_call_id || null,
-        command: upd.command || '',
-        cwd: upd.cwd || '',
-        output_file: upd.output_file || '',
-        startedAt: Date.parse(ev.at) || Date.now(),
+        tool_call_id: (upd['tool_call_id'] as string) || null,
+        command: (upd['command'] as string) || '',
+        cwd: (upd['cwd'] as string) || '',
+        output_file: (upd['output_file'] as string) || '',
+        startedAt: Date.parse(ev.at || '') || Date.now(),
         completed: false,
         exit_code: null,
         signal: null,
@@ -76,47 +158,47 @@ function hydrateBgTasksFromHistory(agentId) {
       });
       continue;
     }
-    if (upd && upd.sessionUpdate === 'task_completed') {
-      const snap = upd.task_snapshot || {};
-      const tid = snap.task_id;
+    if (upd && upd['sessionUpdate'] === 'task_completed') {
+      const snap = (upd['task_snapshot'] as Record<string, unknown>) || {};
+      const tid = snap['task_id'] as string | undefined;
       if (!tid || !out.has(tid)) continue;
-      const entry = out.get(tid);
+      const entry = out.get(tid)!;
       entry.completed = true;
-      entry.exit_code = (snap.exit_code != null) ? snap.exit_code : null;
-      entry.signal    = snap.signal || null;
-      entry.endedAt   = Date.parse(ev.at) || Date.now();
+      entry.exit_code = snap['exit_code'] != null ? (snap['exit_code'] as number) : null;
+      entry.signal    = (snap['signal'] as string) || null;
+      entry.endedAt   = Date.parse(ev.at || '') || Date.now();
       continue;
     }
-    // tool_call_update path: capture in-stream TaskOutput snapshots so we
-    // can recover the dev-server banner even when the on-disk output_file
-    // has been rotated/cleaned up by grok.
-    const ud = ev && ev.data && ev.data.update;
-    const ro = ud && ud.rawOutput;
-    if (ro && ro.type === 'TaskOutput' && ro.Result && ro.Result.task_id) {
-      const tid = ro.Result.task_id;
-      const entry = out.get(tid);
-      if (entry && typeof ro.Result.output === 'string' && ro.Result.output.length) {
-        entry.cached_output = ro.Result.output;
+    const ud = ev?.data?.update;
+    const ro = ud && (ud['rawOutput'] as Record<string, unknown>);
+    if (ro && ro['type'] === 'TaskOutput' && ro['Result']) {
+      const result = ro['Result'] as Record<string, unknown>;
+      if (result['task_id']) {
+        const tid = result['task_id'] as string;
+        const entry = out.get(tid);
+        if (entry && typeof result['output'] === 'string' && (result['output'] as string).length) {
+          entry.cached_output = result['output'] as string;
+        }
       }
     }
   }
   return out;
 }
 
-function metaPath(id) {
+function metaPath(id: string): string {
   return path.join(agentDir(id), 'meta.json');
 }
 
-function readMetaFromDisk(id) {
+function readMetaFromDisk(id: string): Partial<AgentMeta> | null {
   try {
-    return JSON.parse(fs.readFileSync(metaPath(id), 'utf8'));
+    return JSON.parse(fs.readFileSync(metaPath(id), 'utf8')) as Partial<AgentMeta>;
   } catch { return null; }
 }
 
-function writeMeta(record) {
+function writeMeta(record: AgentRecord): void {
   try {
     fs.mkdirSync(agentDir(record.id), { recursive: true });
-    const out = {
+    const out: AgentMeta = {
       id: record.id,
       name: record.name,
       autoNamed: !!record.autoNamed,
@@ -133,13 +215,14 @@ function writeMeta(record) {
     };
     fs.writeFileSync(metaPath(record.id), JSON.stringify(out, null, 2));
   } catch (err) {
-    process.stderr.write(`[meta] write failed for ${record.id}: ${err.message}\n`);
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[meta] write failed for ${record.id}: ${msg}\n`);
   }
 }
 
-function listPersistedAgentIds() {
+function listPersistedAgentIds(): string[] {
   try {
-    return fs.readdirSync(AGENTS_ROOT).filter(name => {
+    return fs.readdirSync(AGENTS_ROOT).filter((name) => {
       try {
         return fs.statSync(path.join(AGENTS_ROOT, name)).isDirectory()
             && fs.existsSync(path.join(AGENTS_ROOT, name, 'meta.json'));
@@ -148,7 +231,7 @@ function listPersistedAgentIds() {
   } catch { return []; }
 }
 
-const MIME_EXT = {
+const MIME_EXT: Record<string, string> = {
   'image/png':  '.png',
   'image/jpeg': '.jpg',
   'image/webp': '.webp',
@@ -156,7 +239,7 @@ const MIME_EXT = {
   'image/svg+xml': '.svg',
 };
 
-function sanitizeFilename(name) {
+function sanitizeFilename(name: string | null | undefined): string {
   return String(name || '')
     .replace(/[\\/]/g, '_')
     .replace(/[^A-Za-z0-9._-]/g, '_')
@@ -164,10 +247,10 @@ function sanitizeFilename(name) {
     .slice(0, 100);
 }
 
-function uniqueUploadName(dir, requestedName, mimeType) {
+function uniqueUploadName(dir: string, requestedName: string | undefined, mimeType: string | undefined): string {
   let raw = sanitizeFilename(requestedName);
   if (!raw) {
-    const ext = MIME_EXT[mimeType] || '';
+    const ext = (mimeType && MIME_EXT[mimeType]) || '';
     raw = `image-${Date.now()}${ext}`;
   }
   let candidate = raw;
@@ -180,38 +263,33 @@ function uniqueUploadName(dir, requestedName, mimeType) {
   return candidate;
 }
 
-function humanSize(bytes) {
+function humanSize(bytes: number): string {
   if (!Number.isFinite(bytes)) return '? bytes';
   if (bytes < 1024) return `${bytes} bytes`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} kB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function attachmentLine(f) {
-  // Keep the per-file line minimal and NEUTRAL.
-  // Older versions appended hints like "your text-based Read tool cannot view
-  // it" for images. That instruction was being parroted back by the model
-  // even when the same prompt also carried an inline image block, causing
-  // the agent to say "I can't view images" while sitting on a perfectly
-  // valid image. The image content block (and the resource_link) already
-  // tell the agent what to do; the text just identifies the file.
+function attachmentLine(f: SavedFile): string {
   const size = humanSize(f.size);
   return `- ${f.abs} (${f.mimeType || 'application/octet-stream'}, ${size})`;
 }
 
 export class AgentManager extends EventEmitter {
+  agents: Map<string, AgentRecord>;
+
   constructor() {
     super();
     this.agents = new Map();
     this._hydrateFromDisk();
   }
 
-  _hydrateFromDisk() {
+  private _hydrateFromDisk(): void {
     for (const id of listPersistedAgentIds()) {
       const meta = readMetaFromDisk(id);
       if (!meta || !meta.id) continue;
-      const ring = createRing(SSE_RING_LIMIT);
-      const record = {
+      const ring = createRing<AgentRingEntry>(SSE_RING_LIMIT);
+      const record: AgentRecord = {
         id: meta.id,
         name: meta.name || `agent-${meta.id.slice(0, 8)}`,
         autoNamed: !!meta.autoNamed,
@@ -230,31 +308,26 @@ export class AgentManager extends EventEmitter {
         status: 'disconnected',
         eventCounter: 0,
       };
-      // Rebuild bgTasks Map from history.jsonl so we don't lose track of
-      // long-running shells (npm run dev etc.) after a server restart. The
-      // map only stays in memory while the agent is connected, but the
-      // tasks themselves can outlive any process on our side.
       record.bgTasks = hydrateBgTasksFromHistory(record.id);
       this.agents.set(record.id, record);
     }
   }
 
-  list() {
+  list(): PublicAgent[] {
     return [...this.agents.values()].map((a) => this._publicRecord(a));
   }
 
-  get(id) {
+  get(id: string): PublicAgent | null {
     const a = this.agents.get(id);
     return a ? this._publicRecord(a) : null;
   }
 
-  // Internal accessor that returns the raw stored record (Map values,
-  // terminal hosts, bgTasks, etc.). Server-side use only.
-  getRaw(id) {
+  getRaw(id: string): AgentRecord | null {
     return this.agents.get(id) || null;
   }
 
-  _publicRecord(a) {
+  private _publicRecord(a: AgentRecord): PublicAgent {
+    const handshake = a.client?.handshake as { _meta?: unknown; agentCapabilities?: unknown } | null;
     return {
       id: a.id,
       name: a.name,
@@ -265,8 +338,8 @@ export class AgentManager extends EventEmitter {
       createdAt: a.createdAt,
       lastSeen: a.lastSeen,
       lastSessionId: a.client?.sessionId || a.lastSessionId || null,
-      handshakeMeta: a.client?.handshake?._meta || null,
-      agentCapabilities: a.client?.handshake?.agentCapabilities || null,
+      handshakeMeta: handshake?._meta || null,
+      agentCapabilities: handshake?.agentCapabilities || null,
       sessionId: a.client?.sessionId || a.lastSessionId || null,
       availableCommands: a.client?.availableCommands || [],
       lastError: a.client?.lastError || a.lastError || null,
@@ -280,7 +353,7 @@ export class AgentManager extends EventEmitter {
     };
   }
 
-  async update(id, patch) {
+  async update(id: string, patch: AgentPatch): Promise<PublicAgent> {
     const a = this.agents.get(id);
     if (!a) throw new Error('agent not found');
     if (!patch || typeof patch !== 'object') throw new Error('invalid patch');
@@ -298,27 +371,19 @@ export class AgentManager extends EventEmitter {
       a.archived = patch.archived;
       a.archivedAt = patch.archived ? nowIso() : null;
       changed = true;
-      // Archiving a live agent disconnects it so resources free up. Restoring
-      // does NOT auto-connect: the user can hit "connect" or just send a
-      // message to wake it up.
       if (patch.archived && a.client) {
         try { await a.client.shutdown('SIGTERM'); } catch { /* ignore */ }
         a.client = null;
         a.status = 'disconnected';
       }
     }
-    // settings: a flat object of grok top-level overrides. Pass `null` to clear.
-    // We do a shallow merge so partial updates ("just change reasoningEffort")
-    // don't clobber the rest.
     if (patch.settings === null) {
       if (a.settings != null) {
         a.settings = null;
         changed = true;
       }
     } else if (patch.settings && typeof patch.settings === 'object') {
-      const next = { ...(a.settings || {}), ...patch.settings };
-      // Strip null/undefined/empty-string values so the settings object stays
-      // tidy (and so _buildArgv treats "cleared" fields as absent).
+      const next: AcpClientSettings = { ...(a.settings || {}), ...patch.settings };
       for (const k of Object.keys(next)) {
         const v = next[k];
         if (v == null) { delete next[k]; continue; }
@@ -330,7 +395,6 @@ export class AgentManager extends EventEmitter {
     }
     if (changed) {
       writeMeta(a);
-      // Surface the change to any open SSE listeners so the UI can react.
       const emitEvent = this._emitEventFactory(a);
       emitEvent('agent_updated', {
         id: a.id,
@@ -343,83 +407,66 @@ export class AgentManager extends EventEmitter {
     return this._publicRecord(a);
   }
 
-  _emitEventFactory(record) {
-    return (event, data) => {
+  private _emitEventFactory(record: AgentRecord): (event: string, data: Record<string, unknown>) => void {
+    return (event: string, data: Record<string, unknown>): void => {
       record.eventCounter = (record.eventCounter || 0) + 1;
       const eventId = `${Date.now()}-${record.eventCounter}`;
-      const wrapped = { id: eventId, event, data: { ...data, _t: Date.now() } };
+      const wrapped: AgentRingEntry = { id: eventId, event, data: { ...data, _t: Date.now() } };
       record.ring.push(wrapped);
       record.lastSeen = nowIso();
-      // Fan out to subscribers first so SSE writes hit the wire before we
-      // touch disk. setImmediate preserves emit order on a single fs queue.
       this.emit(`agent:${record.id}`, wrapped);
       const at = record.lastSeen;
       setImmediate(() => historyAppend(record.id, { eventId, at, event, data }));
     };
   }
 
-  _wireClient(record) {
+  private _wireClient(record: AgentRecord): void {
     const id = record.id;
     const emitEvent = this._emitEventFactory(record);
     const client = record.client;
+    if (!client) return;
 
-    client.on('status', (s) => {
+    client.on('status', (s: Record<string, unknown>) => {
       emitEvent('agent_status', s);
-      // Also surface on the global list_changed channel so consumers tracking
-      // the whole agent set (sidebar, global flow) can update their pills
-      // without subscribing to every per-agent stream.
       this.emit('list_changed', {
         event: 'agent_status',
         id: record.id,
-        status: (s && s.status) || record.status,
+        status: (s && s['status']) || record.status,
       });
     });
-    client.on('handshake', (h) => {
+    client.on('handshake', (h: { _meta?: unknown; agentCapabilities?: unknown }) => {
       emitEvent('handshake', { meta: h?._meta || null, agentCapabilities: h?.agentCapabilities || null });
     });
-    client.on('session_ready', (s) => {
-      // Stash sessionId on the record so subsequent reconnects can session/load.
+    client.on('session_ready', (s: { sessionId?: string; resumed?: boolean }) => {
       if (s && s.sessionId) {
         record.lastSessionId = s.sessionId;
         writeMeta(record);
       }
-      emitEvent('session_ready', s);
+      emitEvent('session_ready', s as unknown as Record<string, unknown>);
     });
-    client.on('update', (params) => {
+    client.on('update', (params: { update?: Record<string, unknown>; _meta?: Record<string, unknown>; sessionId?: string }) => {
       const u = params?.update || {};
-      const event = u.sessionUpdate || 'update';
-      // Stash cumulative totalTokens so the public record can surface usage
-      // to the sidebar without each subscriber having to re-derive it from
-      // the live stream.
+      const event = (u['sessionUpdate'] as string) || 'update';
       const meta = params?._meta;
-      const tt = meta && (meta.totalTokens ?? meta.total_tokens);
+      const tt = meta && ((meta['totalTokens'] as number) ?? (meta['total_tokens'] as number));
       if (typeof tt === 'number' && Number.isFinite(tt) && tt > (record.totalTokens || 0)) {
         record.totalTokens = tt;
-        // Throttle list_changed pushes to ~2/sec per agent so the sidebar
-        // token pill ticks during streaming without flooding the channel.
         const now = Date.now();
         if (!record._lastTokenEmit || (now - record._lastTokenEmit) >= 500) {
           record._lastTokenEmit = now;
           this.emit('list_changed', { event: 'agent_tokens', id: record.id, totalTokens: tt });
         }
       }
-      // Track inFlight tool-call count so the sidebar can show activity at a
-      // glance without each subscriber having to open a per-agent stream.
-      const sub = u.sessionUpdate;
-      const callId = u.toolCallId || u.id;
+      const sub = u['sessionUpdate'];
+      const callId = (u['toolCallId'] as string) || (u['id'] as string);
       if (callId) {
         if (!record._inFlightIds) record._inFlightIds = new Set();
-        // Status can arrive at either u.status (ACP standard) or
-        // _meta.updateParams.status (legacy/manager wrap), and either path
-        // can use lowercase ("completed") or capitalized ("Completed").
-        // Normalize to lowercase before checking against terminal states.
-        const metaStatus = params && params._meta && params._meta.updateParams && params._meta.updateParams.status;
-        const rawStatus = u.status || metaStatus || '';
+        const updateParams = (meta as Record<string, unknown> | undefined)?.['updateParams'] as Record<string, unknown> | undefined;
+        const metaStatus = updateParams && updateParams['status'];
+        const rawStatus = (u['status'] as string) || (metaStatus as string) || '';
         const lowered = String(rawStatus).toLowerCase();
         const TERMINAL = new Set(['completed','success','succeeded','failed','error','errored','canceled','cancelled']);
         if (sub === 'tool_call' || sub === 'tool_call_start') {
-          // A tool_call event that already carries a terminal status means
-          // the agent reported start+finish in one event. Don't add it.
           if (!TERMINAL.has(lowered)) record._inFlightIds.add(callId);
         } else if (sub === 'tool_call_update' || sub === 'tool_call_end') {
           if (TERMINAL.has(lowered)) record._inFlightIds.delete(callId);
@@ -430,42 +477,38 @@ export class AgentManager extends EventEmitter {
           this.emit('list_changed', { event: 'agent_inflight', id: record.id, inFlight: nextCount });
         }
       }
-      // Snapshot grok TaskOutput payloads into bgTasks so we have a fallback
-      // for URL detection when the on-disk output_file is missing (grok can
-      // delete the log between turns, leaving only the in-stream snapshot).
       try {
-        const ro = u && u.rawOutput;
-        if (ro && ro.type === 'TaskOutput' && ro.Result && ro.Result.task_id) {
-          const tid = ro.Result.task_id;
-          if (record.bgTasks && record.bgTasks.has(tid)) {
-            const entry = record.bgTasks.get(tid);
-            if (typeof ro.Result.output === 'string' && ro.Result.output.length) {
-              entry.cached_output = ro.Result.output;
+        const ro = u['rawOutput'] as Record<string, unknown> | undefined;
+        if (ro && ro['type'] === 'TaskOutput' && ro['Result']) {
+          const result = ro['Result'] as Record<string, unknown>;
+          if (result['task_id']) {
+            const tid = result['task_id'] as string;
+            if (record.bgTasks && record.bgTasks.has(tid)) {
+              const entry = record.bgTasks.get(tid)!;
+              if (typeof result['output'] === 'string' && (result['output'] as string).length) {
+                entry.cached_output = result['output'] as string;
+              }
             }
           }
         }
       } catch { /* ignore */ }
       emitEvent(event, { update: u, _meta: params?._meta || null, sessionId: params?.sessionId });
     });
-    client.on('x_notification', (msg) => {
+    client.on('x_notification', (msg: { method?: string; params?: { update?: Record<string, unknown> } }) => {
       const method = msg.method || 'x_notification';
       emitEvent(method.replace(/^_/, ''), { method, params: msg.params });
 
-      // Grok uses its own _x.ai/task_backgrounded + _x.ai/task_completed
-      // notifications (separate from ACP terminal/create) for long-running
-      // shells like `npm run dev`. Track them so the topbar bg counter and
-      // the global viewer reflect grok's bg work, not just ACP terminals.
       const upd = msg?.params?.update;
-      if (upd && upd.sessionUpdate === 'task_backgrounded') {
+      if (upd && upd['sessionUpdate'] === 'task_backgrounded') {
         if (!record.bgTasks) record.bgTasks = new Map();
-        const tid = upd.task_id;
+        const tid = upd['task_id'] as string | undefined;
         if (tid) {
           record.bgTasks.set(tid, {
             id: tid,
-            tool_call_id: upd.tool_call_id || null,
-            command: upd.command || '',
-            cwd: upd.cwd || record.cwd || '',
-            output_file: upd.output_file || '',
+            tool_call_id: (upd['tool_call_id'] as string) || null,
+            command: (upd['command'] as string) || '',
+            cwd: (upd['cwd'] as string) || record.cwd || '',
+            output_file: (upd['output_file'] as string) || '',
             startedAt: Date.now(),
             completed: false,
             exit_code: null,
@@ -474,23 +517,21 @@ export class AgentManager extends EventEmitter {
           });
           this.emit('list_changed', { event: 'bg_tasks', id: record.id, count: countRunningBg(record) });
         }
-      } else if (upd && upd.sessionUpdate === 'task_completed') {
-        const snap = upd.task_snapshot || {};
-        const tid = snap.task_id;
+      } else if (upd && upd['sessionUpdate'] === 'task_completed') {
+        const snap = (upd['task_snapshot'] as Record<string, unknown>) || {};
+        const tid = snap['task_id'] as string | undefined;
         if (tid && record.bgTasks && record.bgTasks.has(tid)) {
-          const entry = record.bgTasks.get(tid);
+          const entry = record.bgTasks.get(tid)!;
           entry.completed = true;
-          entry.exit_code = (snap.exit_code != null) ? snap.exit_code : null;
-          entry.signal    = snap.signal || null;
+          entry.exit_code = snap['exit_code'] != null ? (snap['exit_code'] as number) : null;
+          entry.signal    = (snap['signal'] as string) || null;
           entry.endedAt   = Date.now();
           this.emit('list_changed', { event: 'bg_tasks', id: record.id, count: countRunningBg(record) });
         }
       }
 
-      // session_summary_generated is wrapped in _x.ai/session_notification.
-      // Use it to auto-name the conversation on first turn.
-      if (upd && upd.sessionUpdate === 'session_summary_generated' && record.autoNamed) {
-        const summary = String(upd.session_summary || '').trim();
+      if (upd && upd['sessionUpdate'] === 'session_summary_generated' && record.autoNamed) {
+        const summary = String(upd['session_summary'] || '').trim();
         if (summary) {
           const prev = record.name;
           const next = summary.length > 60 ? summary.slice(0, 60).replace(/\s+\S*$/, '') + '...' : summary;
@@ -502,17 +543,15 @@ export class AgentManager extends EventEmitter {
         }
       }
     });
-    client.on('prompt_complete', (params) => emitEvent('prompt_complete', params));
-    client.on('prompt_result',  (result) => emitEvent('prompt_result', result));
-    client.on('error', (err) => {
-      record.lastError = err?.message || String(err);
+    client.on('prompt_complete', (params: Record<string, unknown>) => emitEvent('prompt_complete', params));
+    client.on('prompt_result',  (result: Record<string, unknown>) => emitEvent('prompt_result', result));
+    client.on('error', (err: Error | { message?: string }) => {
+      record.lastError = (err && (err as Error).message) || String(err);
       writeMeta(record);
       emitEvent('error', { message: record.lastError });
     });
-    client.on('exit', (info) => {
+    client.on('exit', (info: Record<string, unknown>) => {
       emitEvent('agent_exited', info);
-      // Treat unexpected exits as transitions into "disconnected" so the
-      // user can reconnect (rather than the record being stuck in 'exited').
       if (record.client === client) {
         record.client = null;
         record.status = 'disconnected';
@@ -526,18 +565,18 @@ export class AgentManager extends EventEmitter {
         this.emit('list_changed', { event: 'agent_status', id: record.id, status: 'disconnected' });
       }
     });
-    client.on('stderr', (chunk) => emitEvent('stderr', { chunk }));
+    client.on('stderr', (chunk: string) => emitEvent('stderr', { chunk }));
   }
 
-  async spawn({ name, model, cwd, settings } = {}) {
+  async spawn({ name, model, cwd, settings }: AgentSpawnOptions = {}): Promise<PublicAgent> {
     const id = randomUUID();
     ensureAgentDirs(id);
     const dir = agentDir(id);
     const workCwd = cwd && fs.existsSync(cwd) ? path.resolve(cwd) : path.join(dir, 'cwd');
     fs.mkdirSync(workCwd, { recursive: true });
 
-    const ring = createRing(SSE_RING_LIMIT);
-    const record = {
+    const ring = createRing<AgentRingEntry>(SSE_RING_LIMIT);
+    const record: AgentRecord = {
       id,
       name: name || `agent-${id.slice(0, 8)}`,
       autoNamed: !name,
@@ -547,6 +586,9 @@ export class AgentManager extends EventEmitter {
       lastSeen: nowIso(),
       lastSessionId: null,
       lastError: null,
+      starred: false,
+      archived: false,
+      archivedAt: null,
       settings: settings && typeof settings === 'object' ? settings : null,
       client: null,
       ring,
@@ -564,7 +606,7 @@ export class AgentManager extends EventEmitter {
     return pub;
   }
 
-  _connectRecord(record) {
+  private _connectRecord(record: AgentRecord): AcpClient {
     if (record.client) return record.client;
     record.status = 'starting';
     const client = new AcpClient({
@@ -576,15 +618,15 @@ export class AgentManager extends EventEmitter {
     this._wireClient(record);
     const emitEvent = this._emitEventFactory(record);
     emitEvent('agent_status', { status: 'starting' });
-    client.start({ resumeSessionId: record.lastSessionId || null }).catch((err) => {
-      record.lastError = err?.message || String(err);
+    client.start({ resumeSessionId: record.lastSessionId || null }).catch((err: Error | { message?: string }) => {
+      record.lastError = (err && (err as Error).message) || String(err);
       writeMeta(record);
       emitEvent('error', { message: record.lastError });
     });
     return client;
   }
 
-  async connect(id) {
+  async connect(id: string): Promise<PublicAgent> {
     const a = this.agents.get(id);
     if (!a) throw new Error('agent not found');
     if (a.client) return this._publicRecord(a);
@@ -592,7 +634,7 @@ export class AgentManager extends EventEmitter {
     return this._publicRecord(a);
   }
 
-  async disconnect(id) {
+  async disconnect(id: string): Promise<PublicAgent> {
     const a = this.agents.get(id);
     if (!a) throw new Error('agent not found');
     if (!a.client) return this._publicRecord(a);
@@ -613,7 +655,7 @@ export class AgentManager extends EventEmitter {
     return this._publicRecord(a);
   }
 
-  async kill(id) {
+  async kill(id: string): Promise<boolean> {
     const a = this.agents.get(id);
     if (!a) return false;
     if (a.client) {
@@ -621,25 +663,22 @@ export class AgentManager extends EventEmitter {
     }
     this.agents.delete(id);
     this.emit('list_changed', { event: 'agent_removed', id });
-    // Hard delete: scrub the on-disk record. Guarded so we never recurse out
-    // of the agents/ root.
     try {
       const dir = agentDir(id);
       if (dir.startsWith(AGENTS_ROOT + path.sep)) {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     } catch (err) {
-      process.stderr.write(`[kill] failed to remove ${id}: ${err.message}\n`);
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[kill] failed to remove ${id}: ${msg}\n`);
     }
     return true;
   }
 
-  async prompt(id, textOrOpts) {
+  async prompt(id: string, textOrOpts: string | PromptInput): Promise<{ ok: true; debug: Record<string, unknown> }> {
     const a = this.agents.get(id);
     if (!a) throw new Error('agent not found');
 
-    // Auto-reconnect if the agent was disconnected; wait briefly for the
-    // session to be ready so we don't fire prompt against a half-built client.
     if (!a.client) {
       this._connectRecord(a);
       await this._waitForSession(a, 8000);
@@ -648,8 +687,8 @@ export class AgentManager extends EventEmitter {
     }
     if (!a.client) throw new Error('reconnect failed');
 
-    // Accept either a plain string (back-compat) or { text, attachments }.
-    let text, attachments;
+    let text: string;
+    let attachments: PromptAttachment[];
     if (textOrOpts && typeof textOrOpts === 'object' && !Array.isArray(textOrOpts)) {
       text = String(textOrOpts.text || '');
       attachments = Array.isArray(textOrOpts.attachments) ? textOrOpts.attachments : [];
@@ -658,12 +697,7 @@ export class AgentManager extends EventEmitter {
       attachments = [];
     }
 
-    // Save any attachments to <cwd>/uploads/ so the agent can read them via
-    // its terminal / read_file tools. Then append a reference block to the
-    // user text. We do not try to send images as ACP inline content blocks
-    // because no current grok model advertises image input support; routing
-    // through the agent's workspace works for every model.
-    const savedFiles = [];
+    const savedFiles: SavedFile[] = [];
     if (attachments.length) {
       const uploadsDir = path.join(a.cwd, 'uploads');
       fs.mkdirSync(uploadsDir, { recursive: true });
@@ -682,40 +716,20 @@ export class AgentManager extends EventEmitter {
       }
     }
 
-    // Compose the final user message. When files were saved, append a small
-    // block listing them with absolute paths. We intentionally keep this
-    // neutral: the inline image content block and the resource_link block
-    // are what actually tell the agent how to use the file. Adding
-    // instructional prose like "you cannot view this" gets parroted back
-    // by the model even when the image is right there.
-    const supportsImage = !!(a.client?.handshake?.agentCapabilities?.promptCapabilities?.image);
+    const handshake = a.client?.handshake as { agentCapabilities?: { promptCapabilities?: { image?: boolean; embeddedContext?: boolean } } } | null;
+    const supportsImage = !!handshake?.agentCapabilities?.promptCapabilities?.image;
     let finalText = text;
     if (savedFiles.length) {
-      const lines = savedFiles.map(f => attachmentLine(f));
+      const lines = savedFiles.map((f) => attachmentLine(f));
       const refBlock = 'Attached files:\n' + lines.join('\n');
       finalText = text && text.length ? `${text}\n\n${refBlock}` : refBlock;
     }
 
-    // Build the ACP prompt content blocks.
-    // - text: the composed user message + the attachment block listing
-    //   absolute paths and per-kind hints.
-    // - image (when the attachment IS an image): inline base64 so the model
-    //   can actually see pixels. The handshake's promptCapabilities.image
-    //   flag is what the ACP layer advertises, but the underlying API will
-    //   accept image blocks regardless on cloud models. Other clients (TUI)
-    //   send images this way too.
-    // - resource_link: when the agent advertises embeddedContext, also send
-    //   formal ACP resource_link blocks so the agent has a first-class file
-    //   reference (useful for non-image attachments and as a fallback).
-    const embeddedContext = !!(a.client?.handshake?.agentCapabilities?.promptCapabilities?.embeddedContext);
-    const blocks = [];
+    const embeddedContext = !!handshake?.agentCapabilities?.promptCapabilities?.embeddedContext;
+    const blocks: unknown[] = [];
     if (finalText && finalText.length) blocks.push({ type: 'text', text: finalText });
-    // Inline image blocks for any image attachment, regardless of the
-    // capability flag. We read the bytes back from disk (we already wrote
-    // them there) so the base64 doesn't have to be re-encoded from the
-    // browser payload.
     for (let i = 0; i < savedFiles.length; i++) {
-      const f = savedFiles[i];
+      const f = savedFiles[i]!;
       const mime = (f.mimeType || '').toLowerCase();
       if (!mime.startsWith('image/')) continue;
       try {
@@ -740,11 +754,10 @@ export class AgentManager extends EventEmitter {
     }
     if (!blocks.length) throw new Error('empty prompt');
 
-    // Record the user message in history.
-    const histAttachments = savedFiles.map(f => ({
+    const histAttachments = savedFiles.map((f) => ({
       rel: f.rel, mimeType: f.mimeType, size: f.size,
     }));
-    const histData = histAttachments.length
+    const histData: Record<string, unknown> = histAttachments.length
       ? { text: finalText, attachments: histAttachments }
       : { text: finalText };
     historyAppend(id, { at: nowIso(), event: 'user_message', data: histData });
@@ -758,7 +771,6 @@ export class AgentManager extends EventEmitter {
       event: 'user_message',
       data: { ...histData, _t: Date.now() },
     });
-    // Don't await; the prompt resolution flows via prompt_result event.
     a.client.prompt(blocks).catch(() => { /* error already emitted */ });
     return {
       ok: true,
@@ -766,7 +778,7 @@ export class AgentManager extends EventEmitter {
         sessionId: a.client?.sessionId || null,
         composedText: finalText,
         promptBlocks: blocks,
-        savedFiles: savedFiles.map(f => ({
+        savedFiles: savedFiles.map((f) => ({
           abs: f.abs, rel: f.rel, mimeType: f.mimeType, size: f.size,
         })),
         supportsImage,
@@ -774,7 +786,7 @@ export class AgentManager extends EventEmitter {
     };
   }
 
-  async cancel(id) {
+  async cancel(id: string): Promise<boolean> {
     const a = this.agents.get(id);
     if (!a) return false;
     if (!a.client) return false;
@@ -782,7 +794,7 @@ export class AgentManager extends EventEmitter {
     return true;
   }
 
-  async _waitForSession(record, timeoutMs) {
+  private async _waitForSession(record: AgentRecord, timeoutMs: number): Promise<void> {
     if (record.client && record.client.sessionId) return;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -790,25 +802,23 @@ export class AgentManager extends EventEmitter {
       if (record.client && record.client.status === 'errored') {
         throw new Error(record.client.lastError || 'agent errored during reconnect');
       }
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise<void>((r) => setTimeout(r, 100));
     }
     throw new Error('timed out waiting for session');
   }
 
-  ring(id) {
+  ring(id: string): SseRing<AgentRingEntry> | null {
     const a = this.agents.get(id);
     return a ? a.ring : null;
   }
 
-  subscribe(id, listener) {
+  subscribe(id: string, listener: (event: AgentRingEntry) => void): () => void {
     this.on(`agent:${id}`, listener);
     return () => this.off(`agent:${id}`, listener);
   }
 
-  async shutdownAll() {
-    // Disconnect (not delete) every agent so processes are killed cleanly
-    // but their meta + history survive the server restart.
+  async shutdownAll(): Promise<void> {
     const ids = [...this.agents.keys()];
-    await Promise.all(ids.map((id) => this.disconnect(id).catch(() => {})));
+    await Promise.all(ids.map((id) => this.disconnect(id).catch(() => { /* ignore */ })));
   }
 }
