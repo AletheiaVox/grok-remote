@@ -4,13 +4,160 @@
 // small "server info" block. A recheck button re-runs the underlying
 // commands.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-let activeContainer = null;
-let abortToken      = 0;
-let lastUpdatedAt   = null;
+interface SourceRef {
+  type?: string;
+  path?: string;
+  plugin_name?: string;
+}
+interface HookRecord {
+  event?: string;
+  hookType?: string;
+  matcher?: unknown;
+  target?: string;
+  source?: SourceRef;
+}
+interface SkillRecord {
+  name?: string;
+  description?: string;
+  userInvocable?: boolean;
+  source?: SourceRef;
+}
+interface AgentRecord {
+  name?: string;
+  description?: string;
+  systemPrompt?: string;
+  model?: string;
+  tools?: unknown[];
+  source?: SourceRef;
+}
+interface PluginRecord {
+  name?: string;
+  enabled?: boolean;
+  scope?: string;
+  version?: string;
+  path?: string;
+  provides?: {
+    skills?: number;
+    agents?: number;
+    mcpServers?: number;
+    hooks?: boolean | number;
+  };
+}
+interface MarketplaceRecord {
+  name?: string;
+  id?: string;
+  scope?: string;
+  url?: string;
+  plugins?: number;
+  path?: string;
+}
+interface McpServerRecord {
+  name?: string;
+  transport?: string;
+  type?: string;
+  url?: string;
+  command?: string;
+  args?: unknown[];
+  scope?: string;
+  enabled?: boolean;
+}
+interface LspServerRecord {
+  name?: string;
+  language?: string;
+  filetypes?: string[];
+  command?: string;
+  args?: unknown[];
+}
+interface PermissionsRecord {
+  loaded?: number;
+  sources?: unknown[];
+  skipped?: unknown[];
+  mcpServerAllowlist?: unknown[];
+  marketplaceAllowlist?: unknown[];
+}
+interface InspectRecord {
+  grokVersion?: string;
+  cwd?: string;
+  projectRoot?: string;
+  projectTrusted?: boolean;
+  projectInstructions?: unknown[];
+  permissions?: PermissionsRecord;
+  hooks?: HookRecord[];
+  skills?: SkillRecord[];
+  agents?: AgentRecord[];
+  plugins?: PluginRecord[];
+  marketplaces?: MarketplaceRecord[];
+  mcpServers?: McpServerRecord[];
+  lspServers?: LspServerRecord[];
+  configSources?: { userPath?: string; projectPaths?: string[] };
+  [k: string]: unknown;
+}
+interface VersionRecord {
+  version?: string;
+  commit?: string;
+  build?: string;
+  buildHash?: string;
+  hash?: string;
+  channel?: string;
+  timestamp?: string;
+  buildTimestamp?: string;
+  binary?: string;
+  path?: string;
+  [k: string]: unknown;
+}
+interface UpdateRecord {
+  available?: boolean;
+  update?: boolean;
+  hasUpdate?: boolean;
+  latest?: string;
+  latestVersion?: string;
+  target?: string;
+  current?: string;
+  currentVersion?: string;
+  installed?: string;
+  channel?: string;
+}
+interface ServerInfo {
+  node?: string;
+  platform?: string;
+  uptimeSeconds?: number;
+}
+interface HealthPayload {
+  version?: VersionRecord;
+  versionError?: string;
+  update?: UpdateRecord;
+  updateError?: string;
+  server?: ServerInfo;
+  inspect?: InspectRecord;
+  inspectError?: string;
+}
 
-export function mount(container) {
+interface BuildItemOpts {
+  primary?: string;
+  secondary?: string;
+  secondaryClass?: string;
+  tags?: (string | null)[];
+  description?: string;
+  path?: string;
+  sourceLabel?: string;
+  sourcePath?: string;
+  fullRecord?: unknown;
+}
+
+interface BuildSectionOpts {
+  title: string;
+  count: number;
+  countLabel?: string | null;
+  buildBody: () => HTMLElement | null;
+}
+
+let activeContainer: HTMLElement | null = null;
+let abortToken = 0;
+let lastUpdatedAt: Date | null = null;
+
+export function mount(container: HTMLElement): void {
   activeContainer = container;
   abortToken += 1;
   const myToken = abortToken;
@@ -65,7 +212,7 @@ export function mount(container) {
     </section>
   `;
 
-  const btn = container.querySelector('[data-role="recheck"]');
+  const btn = container.querySelector<HTMLButtonElement>('[data-role="recheck"]');
   if (btn) {
     btn.addEventListener('click', () => {
       recheck(container, () => myToken === abortToken).catch(() => {});
@@ -75,7 +222,7 @@ export function mount(container) {
   load(container, () => myToken === abortToken).catch(() => {});
 }
 
-export function unmount() {
+export function unmount(): void {
   abortToken += 1;
   if (activeContainer) {
     activeContainer.replaceChildren();
@@ -83,12 +230,10 @@ export function unmount() {
   }
 }
 
-// ----- data flow -----
-
-async function load(root, alive) {
+async function load(root: HTMLElement, alive: () => boolean): Promise<void> {
   setLoading(root);
   try {
-    const data = await api.systemHealth.get();
+    const data = await api.systemHealth.get() as HealthPayload;
     if (!alive()) return;
     lastUpdatedAt = new Date();
     renderAll(root, data);
@@ -98,15 +243,15 @@ async function load(root, alive) {
   }
 }
 
-async function recheck(root, alive) {
-  const btn = root.querySelector('[data-role="recheck"]');
-  const label = root.querySelector('[data-role="recheck-label"]');
+async function recheck(root: HTMLElement, alive: () => boolean): Promise<void> {
+  const btn = root.querySelector<HTMLButtonElement>('[data-role="recheck"]');
+  const label = root.querySelector<HTMLElement>('[data-role="recheck-label"]');
   if (btn) btn.disabled = true;
   if (btn) btn.dataset.busy = '1';
   if (label) label.textContent = 'rechecking...';
   setLoading(root);
   try {
-    const data = await api.systemHealth.recheck();
+    const data = await api.systemHealth.recheck() as HealthPayload;
     if (!alive()) return;
     lastUpdatedAt = new Date();
     renderAll(root, data);
@@ -122,26 +267,26 @@ async function recheck(root, alive) {
   }
 }
 
-function setLoading(root) {
+function setLoading(root: HTMLElement): void {
   for (const sel of ['version-body', 'update-body', 'server-body']) {
-    const el = root.querySelector(`[data-role="${sel}"]`);
+    const el = root.querySelector<HTMLElement>(`[data-role="${sel}"]`);
     if (el) el.innerHTML = '<p class="health-status">loading...</p>';
   }
-  const insp = root.querySelector('[data-role="inspect-root"]');
+  const insp = root.querySelector<HTMLElement>('[data-role="inspect-root"]');
   if (insp) insp.innerHTML = '<p class="health-status">loading inspect...</p>';
-  const err = root.querySelector('[data-role="error"]');
+  const err = root.querySelector<HTMLElement>('[data-role="error"]');
   if (err) { err.hidden = true; err.textContent = ''; }
 }
 
-function showError(root, err) {
-  const errEl = root.querySelector('[data-role="error"]');
+function showError(root: HTMLElement, err: unknown): void {
+  const errEl = root.querySelector<HTMLElement>('[data-role="error"]');
   if (errEl) {
     errEl.hidden = false;
-    errEl.textContent = err?.message || String(err);
+    errEl.textContent = err instanceof Error ? err.message : String(err);
   }
 }
 
-function renderAll(root, data) {
+function renderAll(root: HTMLElement, data: HealthPayload): void {
   renderVersion(root.querySelector('[data-role="version-body"]'), data?.version, data?.versionError);
   renderUpdate(root.querySelector('[data-role="update-body"]'),  data?.update,  data?.updateError);
   renderServer(root.querySelector('[data-role="server-body"]'),  data?.server);
@@ -149,17 +294,15 @@ function renderAll(root, data) {
   renderLastUpdated(root);
 }
 
-function renderLastUpdated(root) {
-  const el = root.querySelector('[data-role="last-updated"]');
+function renderLastUpdated(root: HTMLElement): void {
+  const el = root.querySelector<HTMLElement>('[data-role="last-updated"]');
   if (!el) return;
   if (!lastUpdatedAt) { el.hidden = true; return; }
   el.hidden = false;
   el.textContent = `last checked ${fmtTimestamp(lastUpdatedAt)}`;
 }
 
-// ----- inspect renderer (the meat) -----
-
-function renderInspect(host, inspect, errMsg) {
+function renderInspect(host: HTMLElement | null, inspect: InspectRecord | undefined, errMsg: string | undefined): void {
   if (!host) return;
   host.replaceChildren();
   if (errMsg) {
@@ -171,11 +314,8 @@ function renderInspect(host, inspect, errMsg) {
     return;
   }
 
-  // Identity card. Single non-collapsible block with the high-level
-  // top-level facts about this project.
   host.appendChild(buildIdentity(inspect));
 
-  // Sections in display order. Each is a collapsible card with a count.
   host.appendChild(buildPermissions(inspect.permissions));
   host.appendChild(buildProjectInstructions(inspect.projectInstructions));
   host.appendChild(buildHooks(inspect.hooks));
@@ -186,8 +326,6 @@ function renderInspect(host, inspect, errMsg) {
   host.appendChild(buildMcpServers(inspect.mcpServers));
   host.appendChild(buildLspServers(inspect.lspServers));
 
-  // Any extra top-level keys we don't know about yet: dump as raw JSON
-  // so we don't silently swallow them.
   const known = new Set([
     'grokVersion', 'cwd', 'projectRoot', 'projectTrusted', 'projectInstructions',
     'permissions', 'hooks', 'skills', 'agents', 'plugins', 'marketplaces',
@@ -210,7 +348,7 @@ function renderInspect(host, inspect, errMsg) {
   }
 }
 
-function buildIdentity(inspect) {
+function buildIdentity(inspect: InspectRecord): HTMLElement {
   const card = document.createElement('article');
   card.className = 'health-identity';
   const head = document.createElement('header');
@@ -221,7 +359,7 @@ function buildIdentity(inspect) {
   const body = document.createElement('div');
   body.className = 'health-identity-body';
 
-  const rows = [
+  const rows: [string, unknown][] = [
     ['grokVersion',       inspect.grokVersion],
     ['cwd',               inspect.cwd],
     ['projectRoot',       inspect.projectRoot],
@@ -268,15 +406,13 @@ function buildIdentity(inspect) {
   return card;
 }
 
-// ----- sections -----
-
-function buildPermissions(perm) {
-  perm = perm || {};
-  const sources = Array.isArray(perm.sources) ? perm.sources : [];
-  const skipped = Array.isArray(perm.skipped) ? perm.skipped : [];
-  const mcpAllow = Array.isArray(perm.mcpServerAllowlist) ? perm.mcpServerAllowlist : [];
-  const mktAllow = Array.isArray(perm.marketplaceAllowlist) ? perm.marketplaceAllowlist : [];
-  const loaded = typeof perm.loaded === 'number' ? perm.loaded : null;
+function buildPermissions(perm: PermissionsRecord | undefined): HTMLElement {
+  const p = perm || {};
+  const sources = Array.isArray(p.sources) ? p.sources : [];
+  const skipped = Array.isArray(p.skipped) ? p.skipped : [];
+  const mcpAllow = Array.isArray(p.mcpServerAllowlist) ? p.mcpServerAllowlist : [];
+  const mktAllow = Array.isArray(p.marketplaceAllowlist) ? p.marketplaceAllowlist : [];
+  const loaded = typeof p.loaded === 'number' ? p.loaded : null;
 
   return buildSection({
     title: 'permissions',
@@ -286,7 +422,6 @@ function buildPermissions(perm) {
       const wrap = document.createElement('div');
       wrap.className = 'health-section-body';
 
-      // loaded count summary
       const kv = document.createElement('dl');
       kv.className = 'health-kv';
       const dtL = document.createElement('dt'); dtL.textContent = 'loaded';
@@ -330,8 +465,8 @@ function buildPermissions(perm) {
   });
 }
 
-function buildProjectInstructions(items) {
-  items = Array.isArray(items) ? items : [];
+function buildProjectInstructions(itemsIn: unknown[] | undefined): HTMLElement {
+  const items = Array.isArray(itemsIn) ? itemsIn : [];
   return buildSection({
     title: 'project instructions',
     count: items.length,
@@ -356,8 +491,8 @@ function buildProjectInstructions(items) {
   });
 }
 
-function buildHooks(hooks) {
-  hooks = Array.isArray(hooks) ? hooks : [];
+function buildHooks(hooksIn: HookRecord[] | undefined): HTMLElement {
+  const hooks = Array.isArray(hooksIn) ? hooksIn : [];
   return buildSection({
     title: 'hooks',
     count: hooks.length,
@@ -373,7 +508,7 @@ function buildHooks(hooks) {
             h.matcher ? `matcher: ${truncate(stringify(h.matcher), 60)}` : null,
             h.source?.type ? `source: ${h.source.type}` : null,
             h.source?.plugin_name ? `plugin: ${h.source.plugin_name}` : null,
-          ].filter(Boolean),
+          ],
           sourceLabel: h.source?.plugin_name
             ? `from plugin: ${h.source.plugin_name}`
             : (h.source?.type ? `defined in: ${h.source.type}` : 'defined in:'),
@@ -386,8 +521,8 @@ function buildHooks(hooks) {
   });
 }
 
-function buildSkills(skills) {
-  skills = Array.isArray(skills) ? skills : [];
+function buildSkills(skillsIn: SkillRecord[] | undefined): HTMLElement {
+  const skills = Array.isArray(skillsIn) ? skillsIn : [];
   return buildSection({
     title: 'skills',
     count: skills.length,
@@ -401,7 +536,7 @@ function buildSkills(skills) {
           secondary: s.source?.type ? scopeLabel(s.source.type) : '',
           tags: [
             s.userInvocable ? 'user-invocable' : null,
-          ].filter(Boolean),
+          ],
           description: s.description || '',
           sourceLabel: s.source?.plugin_name
             ? `from plugin: ${s.source.plugin_name}`
@@ -415,8 +550,8 @@ function buildSkills(skills) {
   });
 }
 
-function buildAgents(agents) {
-  agents = Array.isArray(agents) ? agents : [];
+function buildAgents(agentsIn: AgentRecord[] | undefined): HTMLElement {
+  const agents = Array.isArray(agentsIn) ? agentsIn : [];
   return buildSection({
     title: 'agents',
     count: agents.length,
@@ -431,7 +566,7 @@ function buildAgents(agents) {
           tags: [
             a.model ? `model: ${a.model}` : null,
             Array.isArray(a.tools) ? `tools: ${a.tools.length}` : null,
-          ].filter(Boolean),
+          ],
           description: a.description || a.systemPrompt || '',
           sourceLabel: a.source?.plugin_name
             ? `from plugin: ${a.source.plugin_name}`
@@ -445,9 +580,8 @@ function buildAgents(agents) {
   });
 }
 
-function buildPlugins(plugins) {
-  plugins = Array.isArray(plugins) ? plugins : [];
-  // sort: enabled first, then by name
+function buildPlugins(pluginsIn: PluginRecord[] | undefined): HTMLElement {
+  const plugins = Array.isArray(pluginsIn) ? pluginsIn : [];
   const sorted = [...plugins].sort((a, b) => {
     const ea = a.enabled === false ? 1 : 0;
     const eb = b.enabled === false ? 1 : 0;
@@ -464,7 +598,7 @@ function buildPlugins(plugins) {
       list.className = 'health-item-list';
       for (const p of sorted) {
         const provides = p.provides || {};
-        const tags = [];
+        const tags: (string | null)[] = [];
         if (p.scope) tags.push(scopeLabel(p.scope));
         if (p.version) tags.push(`v${p.version}`);
         if (provides.skills)     tags.push(`skills: ${provides.skills}`);
@@ -486,8 +620,8 @@ function buildPlugins(plugins) {
   });
 }
 
-function buildMarketplaces(items) {
-  items = Array.isArray(items) ? items : [];
+function buildMarketplaces(itemsIn: MarketplaceRecord[] | undefined): HTMLElement {
+  const items = Array.isArray(itemsIn) ? itemsIn : [];
   return buildSection({
     title: 'marketplaces',
     count: items.length,
@@ -502,7 +636,7 @@ function buildMarketplaces(items) {
           tags: [
             m.url ? `url: ${truncate(m.url, 60)}` : null,
             typeof m.plugins === 'number' ? `plugins: ${m.plugins}` : null,
-          ].filter(Boolean),
+          ],
           path: m.path || m.url || '',
           fullRecord: m,
         }));
@@ -512,8 +646,8 @@ function buildMarketplaces(items) {
   });
 }
 
-function buildMcpServers(servers) {
-  servers = Array.isArray(servers) ? servers : [];
+function buildMcpServers(serversIn: McpServerRecord[] | undefined): HTMLElement {
+  const servers = Array.isArray(serversIn) ? serversIn : [];
   return buildSection({
     title: 'mcp servers',
     count: servers.length,
@@ -530,7 +664,7 @@ function buildMcpServers(servers) {
           tags: [
             s.scope ? scopeLabel(s.scope) : null,
             s.enabled === false ? 'disabled' : null,
-          ].filter(Boolean),
+          ],
           path: target,
           fullRecord: s,
         }));
@@ -540,8 +674,8 @@ function buildMcpServers(servers) {
   });
 }
 
-function buildLspServers(servers) {
-  servers = Array.isArray(servers) ? servers : [];
+function buildLspServers(serversIn: LspServerRecord[] | undefined): HTMLElement {
+  const servers = Array.isArray(serversIn) ? serversIn : [];
   return buildSection({
     title: 'lsp servers',
     count: servers.length,
@@ -555,7 +689,7 @@ function buildLspServers(servers) {
           secondary: s.language || '',
           tags: [
             Array.isArray(s.filetypes) && s.filetypes.length ? `filetypes: ${s.filetypes.join(', ')}` : null,
-          ].filter(Boolean),
+          ],
           path: s.command || (Array.isArray(s.args) ? s.args.join(' ') : ''),
           fullRecord: s,
         }));
@@ -565,9 +699,7 @@ function buildLspServers(servers) {
   });
 }
 
-// ----- building blocks -----
-
-function buildSection({ title, count, countLabel, buildBody }) {
+function buildSection({ title, count, countLabel, buildBody }: BuildSectionOpts): HTMLElement {
   const wrap = document.createElement('article');
   wrap.className = 'health-section';
 
@@ -579,7 +711,7 @@ function buildSection({ title, count, countLabel, buildBody }) {
 
   const chevron = document.createElement('span');
   chevron.className = 'health-section-chev';
-  chevron.textContent = '▸'; // right-pointing triangle
+  chevron.textContent = '▸';
   head.appendChild(chevron);
 
   const titleEl = document.createElement('span');
@@ -600,22 +732,22 @@ function buildSection({ title, count, countLabel, buildBody }) {
   wrap.appendChild(body);
 
   let built = false;
-  function expand() {
+  function expand(): void {
     if (!built) {
       try {
         const content = buildBody();
         body.replaceChildren();
         if (content) body.appendChild(content);
       } catch (err) {
-        body.replaceChildren(errorNote(err?.message || String(err)));
+        body.replaceChildren(errorNote(err instanceof Error ? err.message : String(err)));
       }
       built = true;
     }
     body.classList.remove('hidden');
-    chevron.textContent = '▾'; // down-pointing triangle
+    chevron.textContent = '▾';
     head.setAttribute('aria-expanded', 'true');
   }
-  function collapse() {
+  function collapse(): void {
     body.classList.add('hidden');
     chevron.textContent = '▸';
     head.setAttribute('aria-expanded', 'false');
@@ -634,7 +766,7 @@ function buildSection({ title, count, countLabel, buildBody }) {
   return wrap;
 }
 
-function buildList(title, items, renderItem) {
+function buildList(title: string, items: unknown[], renderItem: (item: unknown) => HTMLElement | null): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'health-sublist';
   const h = document.createElement('div');
@@ -657,7 +789,8 @@ function buildList(title, items, renderItem) {
   return wrap;
 }
 
-function buildItem({ primary, secondary, secondaryClass, tags, description, path, sourceLabel, sourcePath, fullRecord }) {
+function buildItem(opts: BuildItemOpts): HTMLElement {
+  const { primary, secondary, secondaryClass, tags, description, path, sourceLabel, sourcePath, fullRecord } = opts;
   const card = document.createElement('div');
   card.className = 'health-item';
 
@@ -679,10 +812,11 @@ function buildItem({ primary, secondary, secondaryClass, tags, description, path
     left.appendChild(sec);
   }
 
-  if (Array.isArray(tags) && tags.length) {
+  const filteredTags = Array.isArray(tags) ? tags.filter((t): t is string => Boolean(t)) : [];
+  if (filteredTags.length) {
     const tagWrap = document.createElement('span');
     tagWrap.className = 'health-item-tags';
-    for (const t of tags) {
+    for (const t of filteredTags) {
       const tag = document.createElement('span');
       tag.className = 'health-item-tag';
       tag.textContent = t;
@@ -708,8 +842,6 @@ function buildItem({ primary, secondary, secondaryClass, tags, description, path
     card.appendChild(p);
   }
 
-  // Source attribution: every config item came from somewhere on disk or
-  // from a plugin. Make it visible so users can find + edit the source.
   if (sourceLabel || sourcePath || path) {
     const src = document.createElement('div');
     src.className = 'health-item-source';
@@ -730,13 +862,15 @@ function buildItem({ primary, secondary, secondaryClass, tags, description, path
       copyBtn.className = 'health-copy-btn';
       copyBtn.textContent = 'copy';
       copyBtn.title = 'copy path to clipboard';
-      copyBtn.addEventListener('click', async (ev) => {
+      copyBtn.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(finalPath);
-          copyBtn.textContent = 'copied';
-          setTimeout(() => { copyBtn.textContent = 'copy'; }, 1200);
-        } catch { /* ignore */ }
+        void (async () => {
+          try {
+            await navigator.clipboard.writeText(finalPath);
+            copyBtn.textContent = 'copied';
+            setTimeout(() => { copyBtn.textContent = 'copy'; }, 1200);
+          } catch { /* ignore */ }
+        })();
       });
       src.appendChild(copyBtn);
     }
@@ -756,21 +890,21 @@ function buildItem({ primary, secondary, secondaryClass, tags, description, path
   return card;
 }
 
-function rawJsonBlock(value) {
+function rawJsonBlock(value: unknown): HTMLElement {
   const pre = document.createElement('pre');
   pre.className = 'health-json-block';
   pre.textContent = safeStringify(value, 2);
   return pre;
 }
 
-function dimText(text) {
+function dimText(text: string): HTMLElement {
   const p = document.createElement('p');
   p.className = 'health-status health-dim';
   p.textContent = text;
   return p;
 }
 
-function scopeLabel(s) {
+function scopeLabel(s: string | undefined): string {
   if (!s) return '';
   const lc = String(s).toLowerCase();
   if (lc === 'user' || lc === 'global') return 'user';
@@ -780,9 +914,7 @@ function scopeLabel(s) {
   return lc;
 }
 
-// ----- top-row renderers (version / update / server) -----
-
-function renderVersion(host, version, errMsg) {
+function renderVersion(host: HTMLElement | null, version: VersionRecord | undefined, errMsg: string | undefined): void {
   if (!host) return;
   host.replaceChildren();
   if (errMsg) { host.appendChild(errorNote(errMsg)); return; }
@@ -793,20 +925,21 @@ function renderVersion(host, version, errMsg) {
   const dl = document.createElement('dl');
   dl.className = 'health-kv';
   const KNOWN = ['version', 'commit', 'build', 'buildHash', 'hash', 'channel', 'timestamp', 'buildTimestamp', 'binary', 'path'];
-  const seen = new Set();
+  const seen = new Set<string>();
+  const v = version as Record<string, unknown>;
   for (const key of KNOWN) {
-    if (version[key] === undefined || version[key] === null) continue;
+    if (v[key] === undefined || v[key] === null) continue;
     seen.add(key);
     const dt = document.createElement('dt'); dt.textContent = key;
-    const dd = document.createElement('dd'); dd.textContent = stringify(version[key]);
+    const dd = document.createElement('dd'); dd.textContent = stringify(v[key]);
     dl.append(dt, dd);
   }
-  for (const [k, v] of Object.entries(version)) {
+  for (const [k, val] of Object.entries(v)) {
     if (seen.has(k)) continue;
-    if (v === null || v === undefined) continue;
-    if (typeof v === 'object') continue;
+    if (val === null || val === undefined) continue;
+    if (typeof val === 'object') continue;
     const dt = document.createElement('dt'); dt.textContent = k;
-    const dd = document.createElement('dd'); dd.textContent = stringify(v);
+    const dd = document.createElement('dd'); dd.textContent = stringify(val);
     dl.append(dt, dd);
   }
   if (!dl.childElementCount) {
@@ -816,7 +949,7 @@ function renderVersion(host, version, errMsg) {
   host.appendChild(dl);
 }
 
-function renderUpdate(host, update, errMsg) {
+function renderUpdate(host: HTMLElement | null, update: UpdateRecord | undefined, errMsg: string | undefined): void {
   if (!host) return;
   host.replaceChildren();
   if (errMsg && !update) {
@@ -870,15 +1003,17 @@ function renderUpdate(host, update, errMsg) {
     btn.type = 'button';
     btn.className = 'health-copy-btn';
     btn.textContent = 'copy';
-    btn.addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText('grok update');
-        btn.textContent = 'copied';
-        setTimeout(() => { btn.textContent = 'copy'; }, 1500);
-      } catch {
-        btn.textContent = 'copy failed';
-        setTimeout(() => { btn.textContent = 'copy'; }, 1500);
-      }
+    btn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          await navigator.clipboard.writeText('grok update');
+          btn.textContent = 'copied';
+          setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+        } catch {
+          btn.textContent = 'copy failed';
+          setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+        }
+      })();
     });
     row.append(cmd, btn);
     host.appendChild(row);
@@ -889,7 +1024,7 @@ function renderUpdate(host, update, errMsg) {
   }
 }
 
-function renderServer(host, server) {
+function renderServer(host: HTMLElement | null, server: ServerInfo | undefined): void {
   if (!host) return;
   host.replaceChildren();
   if (!server || typeof server !== 'object') {
@@ -898,7 +1033,7 @@ function renderServer(host, server) {
   }
   const dl = document.createElement('dl');
   dl.className = 'health-kv';
-  const rows = [
+  const rows: [string, string][] = [
     ['node',     server.node || ''],
     ['platform', server.platform || ''],
     ['uptime',   fmtUptime(server.uptimeSeconds)],
@@ -911,41 +1046,39 @@ function renderServer(host, server) {
   host.appendChild(dl);
 }
 
-// ----- formatters -----
-
-function plain(text) {
+function plain(text: string): HTMLElement {
   const p = document.createElement('p');
   p.className = 'health-status';
   p.textContent = text;
   return p;
 }
 
-function errorNote(msg) {
+function errorNote(msg: string): HTMLElement {
   const p = document.createElement('p');
   p.className = 'health-card-error';
   p.textContent = msg;
   return p;
 }
 
-function stringify(v) {
+function stringify(v: unknown): string {
   if (v === null || v === undefined) return '';
   if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   try { return JSON.stringify(v); } catch { return String(v); }
 }
 
-function safeStringify(v, indent) {
+function safeStringify(v: unknown, indent: number): string {
   try { return JSON.stringify(v, null, indent); }
   catch { return String(v); }
 }
 
-function truncate(s, n) {
-  s = String(s);
-  if (s.length <= n) return s;
-  return s.slice(0, Math.max(0, n - 1)) + '…';
+function truncate(s: unknown, n: number): string {
+  const str = String(s);
+  if (str.length <= n) return str;
+  return str.slice(0, Math.max(0, n - 1)) + '…';
 }
 
-function fmtTimestamp(d) {
+function fmtTimestamp(d: Date): string {
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
@@ -953,14 +1086,14 @@ function fmtTimestamp(d) {
   return `${hh}:${mm}:${ss}`;
 }
 
-function fmtUptime(seconds) {
+function fmtUptime(seconds: number | undefined): string {
   const s = Number(seconds);
   if (!Number.isFinite(s) || s <= 0) return '0s';
   const days = Math.floor(s / 86400);
   const hrs  = Math.floor((s % 86400) / 3600);
   const mins = Math.floor((s % 3600) / 60);
   const secs = Math.floor(s % 60);
-  const parts = [];
+  const parts: string[] = [];
   if (days) parts.push(`${days}d`);
   if (hrs)  parts.push(`${hrs}h`);
   if (mins) parts.push(`${mins}m`);

@@ -156,7 +156,7 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | src/views/system/index.js             | src/views/system/index.ts                |
 | [x]    | src/views/system/_native_common.js    | src/views/system/_native_common.ts       |
 | [x]    | src/views/system/agents.js            | src/views/system/agents.ts               |
-| [ ]    | src/views/system/health.js            | src/views/system/health.ts               |
+| [x]    | src/views/system/health.js            | src/views/system/health.ts               |
 | [x]    | src/views/system/hooks.js             | src/views/system/hooks.ts                |
 | [x]    | src/views/system/import.js            | src/views/system/import.ts               |
 | [x]    | src/views/system/leaders.js           | src/views/system/leaders.ts              |
@@ -172,7 +172,7 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | src/views/system/worktrees.js         | src/views/system/worktrees.ts            |
 | [x]    | src/views/system/flow.js              | src/views/system/flow.ts                 |
 | [ ]    | src/views/system/flow.jsx             | src/views/system/flow.tsx                |
-| [ ]    | src/views/system/flow-floating-edge.jsx | src/views/system/flow-floating-edge.tsx |
+| [x]    | src/views/system/flow-floating-edge.jsx | src/views/system/flow-floating-edge.tsx |
 
 ### Phase 7 — heavy hitters
 
