@@ -1,4 +1,4 @@
-// Live agent flow page. Lazy wrapper around flow.jsx.
+// Live agent flow page. Lazy wrapper around flow.tsx.
 
 import type { Root } from 'react-dom/client';
 
@@ -23,7 +23,7 @@ async function _doMount(container: HTMLElement, appProps: Record<string, unknown
   const [{ createElement }, { createRoot }, flowMod] = await Promise.all([
     import('react'),
     import('react-dom/client'),
-    import('./flow.jsx' as string),
+    import('./flow.tsx' as string),
   ]);
   const FlowApp = (flowMod as { default: unknown }).default;
 

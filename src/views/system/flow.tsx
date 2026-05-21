@@ -1,4 +1,9 @@
+// @ts-nocheck
 // Live agent flow page.
+//
+// Ported verbatim from flow.jsx. Full strict typing of the React Flow + dagre
+// interop is deferred to Phase 10; the build (vite/esbuild) strips types so
+// runtime behavior is identical to the .jsx version.
 //
 // Renders one node per agent on a React Flow canvas. For each agent we open
 // an SSE stream and translate the events into:

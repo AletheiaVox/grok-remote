@@ -171,7 +171,8 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | src/views/system/skills.js            | src/views/system/skills.ts               |
 | [x]    | src/views/system/worktrees.js         | src/views/system/worktrees.ts            |
 | [x]    | src/views/system/flow.js              | src/views/system/flow.ts                 |
-| [ ]    | src/views/system/flow.jsx             | src/views/system/flow.tsx                |
+| [x]    | src/views/system/flow.jsx             | src/views/system/flow.tsx                | <!-- @ts-nocheck for now, strict types in Phase 10 -->
+
 | [x]    | src/views/system/flow-floating-edge.jsx | src/views/system/flow-floating-edge.tsx |
 
 ### Phase 7 — heavy hitters
@@ -221,6 +222,10 @@ logged-in `grok` CLI on the host.
 - [ ] delete any remaining `.js` files in `src/` and `lib/`
 - [ ] update README's repo layout section
 - [ ] document local integration test runner in README
+- [ ] remove `// @ts-nocheck` from `src/views/system/flow.tsx` and add real types
+- [ ] fix backlog of `tsc --noEmit` errors accumulated through phases 4-6
+      (server.ts drag events, version-footer LatestInfo, settings PageModule,
+       mcp AddServerBody index sig, worktrees Filters/GcState casts, etc.)
 
 ## How to iterate
 
