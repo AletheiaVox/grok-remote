@@ -61,6 +61,8 @@ export const api = {
   createAgent:  (body?: Record<string, unknown>): Promise<unknown>  => request('POST',   '/api/agents', body || {}),
   deleteAgent:  (id: string): Promise<unknown>          => request('DELETE', `/api/agents/${encodeURIComponent(id)}`),
   updateAgent:  (id: string, patch?: Record<string, unknown>): Promise<unknown>   => request('PATCH',  `/api/agents/${encodeURIComponent(id)}`, patch || {}),
+  setAgentFolder: (id: string, folderId: string | null): Promise<unknown> =>
+    request('PUT', `/api/agents/${encodeURIComponent(id)}/folder`, { folderId }),
   disconnect:   (id: string): Promise<unknown>          => request('POST',   `/api/agents/${encodeURIComponent(id)}/disconnect`),
   connect:      (id: string): Promise<unknown>          => request('POST',   `/api/agents/${encodeURIComponent(id)}/connect`),
   share:        (id: string): Promise<unknown>          => request('POST',   `/api/agents/${encodeURIComponent(id)}/publish`),
@@ -194,6 +196,19 @@ export const api = {
     profileStatus: (pid: string): Promise<unknown> => request('GET',  `/api/system/leaders/${encodeURIComponent(pid)}/profile/status`),
     profileStart:  (pid: string, body?: Record<string, unknown>): Promise<unknown> => request('POST', `/api/system/leaders/${encodeURIComponent(pid)}/profile/start`, body || {}),
     profileStop:   (pid: string, body?: Record<string, unknown>): Promise<unknown> => request('POST', `/api/system/leaders/${encodeURIComponent(pid)}/profile/stop`, body || {}),
+  },
+
+  folders: {
+    list:   (): Promise<unknown> => request('GET', '/api/folders'),
+    create: (name: string): Promise<unknown> => request('POST', '/api/folders', { name }),
+    update: (id: string, patch: { name?: string; agentIds?: string[] }): Promise<unknown> =>
+      request('PATCH', `/api/folders/${encodeURIComponent(id)}`, patch || {}),
+    remove: (id: string): Promise<unknown> => request('DELETE', `/api/folders/${encodeURIComponent(id)}`),
+  },
+
+  agents: {
+    setFolder: (agentId: string, folderId: string | null): Promise<unknown> =>
+      request('PUT', `/api/agents/${encodeURIComponent(agentId)}/folder`, { folderId }),
   },
 
   worktrees: {
