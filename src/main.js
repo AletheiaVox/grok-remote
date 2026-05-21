@@ -14,11 +14,11 @@ import { AgentsSidebar } from './views/agents.js';
 import { ChatView } from './views/chat.js';
 import { SettingsView } from './views/settings.js';
 import { el } from './lib/render.js';
-import { registerPwa } from './lib/pwa.js';
+import { registerPwa } from './lib/pwa';
 import { applyTheme, getTheme, nextTheme, getThemeMeta } from './lib/themes';
 import { installVersionFooter } from './lib/version-footer.js';
 import { SYSTEM_PAGES, getSystemPage, getSettingsPage } from './views/system/index.js';
-import { iconHtml } from './lib/icons.js';
+import { iconHtml } from './lib/icons';
 
 // Apply persisted theme as early as possible (before any DOM is drawn) so the
 // dashboard never flashes the default palette.

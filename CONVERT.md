@@ -71,7 +71,7 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | tsconfig.server.json (new)    | for `tsc` emit of backend        | extends root; `outDir: build` |
 | [x]    | package.json (edit)           | add scripts + devDeps            | typescript, tsx, @types/node, @types/react, @types/react-dom |
 | [skip] | ecosystem.config.cjs          | stays CommonJS                   | pm2 reads CJS; not worth converting |
-| [ ]    | vite.config.js                | vite.config.ts                   | trivial |
+| [x]    | vite.config.js                | vite.config.ts                   | trivial |
 
 ### Phase 1 — leaf utilities
 
@@ -80,18 +80,18 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | src/lib/format.js             | src/lib/format.ts                |
 | [x]    | src/lib/themes.js             | src/lib/themes.ts                |
 | [x]    | src/lib/copy.js               | src/lib/copy.ts                  |
-| [ ]    | src/lib/icons.js              | src/lib/icons.ts                 |
-| [ ]    | src/lib/sse.js                | src/lib/sse.ts                   |
-| [ ]    | src/lib/pwa.js                | src/lib/pwa.ts                   |
-| [ ]    | src/lib/image-lightbox.js     | src/lib/image-lightbox.ts        |
-| [ ]    | src/lib/intro-animation.js    | src/lib/intro-animation.ts       |
-| [ ]    | src/lib/slash-palette.js      | src/lib/slash-palette.ts         |
-| [ ]    | src/lib/attach-images.js      | src/lib/attach-images.ts         |
-| [ ]    | lib/sse.js                    | lib/sse.ts                       |
-| [ ]    | lib/install-mode.js           | lib/install-mode.ts              |
-| [ ]    | lib/launch.js                 | lib/launch.ts                    |
-| [ ]    | lib/dev-url.js                | lib/dev-url.ts                   |
-| [ ]    | lib/retention.js              | lib/retention.ts                 |
+| [x]    | src/lib/icons.js              | src/lib/icons.ts                 |
+| [x]    | src/lib/sse.js                | src/lib/sse.ts                   |
+| [x]    | src/lib/pwa.js                | src/lib/pwa.ts                   |
+| [x]    | src/lib/image-lightbox.js     | src/lib/image-lightbox.ts        |
+| [x]    | src/lib/intro-animation.js    | src/lib/intro-animation.ts       |
+| [x]    | src/lib/slash-palette.js      | src/lib/slash-palette.ts         |
+| [x]    | src/lib/attach-images.js      | src/lib/attach-images.ts         |
+| [x]    | lib/sse.js                    | lib/sse.ts                       |
+| [x]    | lib/install-mode.js           | lib/install-mode.ts              |
+| [x]    | lib/launch.js                 | lib/launch.ts                    |
+| [x]    | lib/dev-url.js                | lib/dev-url.ts                   |
+| [x]    | lib/retention.js              | lib/retention.ts                 |
 
 ### Phase 2 — server-side support libs
 

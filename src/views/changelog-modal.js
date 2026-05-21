@@ -5,7 +5,7 @@
 // expandable bodies. Mounted on demand from the version footer.
 
 import { el } from '../lib/render.js';
-import { iconHtml } from '../lib/icons.js';
+import { iconHtml } from '../lib/icons';
 import { api } from '../lib/api.js';
 
 let activeModal = null;

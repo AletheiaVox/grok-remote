@@ -9,29 +9,75 @@ import os from 'node:os';
 
 const AGENTS_ROOT = path.join(os.homedir(), '.grok-remote', 'agents');
 
-function readMeta(id) {
+export interface AgentMeta {
+  starred?: boolean;
+  lastSeen?: string;
+  updatedAt?: string;
+  createdAt?: string;
+  [key: string]: unknown;
+}
+
+export interface AgentLiveRecord {
+  id: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
+export interface AgentManagerLike {
+  list(): AgentLiveRecord[];
+  kill(id: string): Promise<unknown> | unknown;
+}
+
+export interface SweepInputs {
+  days?: number;
+  manager?: AgentManagerLike | null;
+  now?: number;
+}
+
+export interface SweepResult {
+  scanned: number;
+  removed: number;
+  skipped: number;
+}
+
+export interface RetentionTimerInputs {
+  getSettings?: () => { retentionDays?: number } | null | undefined;
+  manager?: AgentManagerLike | null;
+  intervalMs?: number;
+}
+
+export interface RetentionTimer {
+  stop(): void;
+  tick(): void;
+}
+
+function readMeta(id: string): AgentMeta | null {
   try {
     const raw = fs.readFileSync(path.join(AGENTS_ROOT, id, 'meta.json'), 'utf8');
-    return JSON.parse(raw);
+    return JSON.parse(raw) as AgentMeta;
   } catch { return null; }
 }
 
-function dirMtimeMs(id) {
+function dirMtimeMs(id: string): number {
   try { return fs.statSync(path.join(AGENTS_ROOT, id)).mtimeMs; }
   catch { return 0; }
 }
 
-export function sweepOnce({ days, manager, now = Date.now() } = {}) {
+export function sweepOnce(
+  { days, manager, now = Date.now() }: SweepInputs = {},
+): SweepResult {
   const n = Number(days);
   if (!Number.isFinite(n) || n <= 0) return { scanned: 0, removed: 0, skipped: 0 };
   const cutoffMs = now - n * 24 * 60 * 60 * 1000;
 
-  let entries;
+  let entries: string[];
   try { entries = fs.readdirSync(AGENTS_ROOT); }
   catch { return { scanned: 0, removed: 0, skipped: 0 }; }
 
   let scanned = 0, removed = 0, skipped = 0;
-  const active = manager ? new Map(manager.list().map(r => [r.id, r])) : new Map();
+  const active = manager
+    ? new Map<string, AgentLiveRecord>(manager.list().map((r) => [r.id, r]))
+    : new Map<string, AgentLiveRecord>();
 
   for (const id of entries) {
     const metaPath = path.join(AGENTS_ROOT, id, 'meta.json');
@@ -47,7 +93,7 @@ export function sweepOnce({ days, manager, now = Date.now() } = {}) {
 
     try {
       if (manager) {
-        manager.kill(id).catch(() => {});
+        Promise.resolve(manager.kill(id)).catch(() => { /* ignore */ });
       } else {
         const dir = path.join(AGENTS_ROOT, id);
         if (dir.startsWith(AGENTS_ROOT + path.sep)) {
@@ -63,10 +109,12 @@ export function sweepOnce({ days, manager, now = Date.now() } = {}) {
 }
 
 // Start a daily sweep timer. Returns a stop() handle.
-export function startRetentionTimer({ getSettings, manager, intervalMs = 24 * 60 * 60 * 1000 } = {}) {
-  const tick = () => {
+export function startRetentionTimer(
+  { getSettings, manager, intervalMs = 24 * 60 * 60 * 1000 }: RetentionTimerInputs = {},
+): RetentionTimer {
+  const tick = (): void => {
     try {
-      const s = typeof getSettings === 'function' ? getSettings() : {};
+      const s = typeof getSettings === 'function' ? getSettings() : null;
       const days = Number(s && s.retentionDays);
       if (Number.isFinite(days) && days > 0) {
         const r = sweepOnce({ days, manager });
@@ -75,14 +123,14 @@ export function startRetentionTimer({ getSettings, manager, intervalMs = 24 * 60
         }
       }
     } catch (err) {
-      process.stderr.write(`[retention] sweep failed: ${err && err.message}\n`);
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[retention] sweep failed: ${msg}\n`);
     }
   };
-  // Run once at startup (after a 30s delay so the server is settled), then daily.
   const initial = setTimeout(tick, 30_000);
   const handle = setInterval(tick, intervalMs);
   return {
-    stop() { clearTimeout(initial); clearInterval(handle); },
+    stop(): void { clearTimeout(initial); clearInterval(handle); },
     tick,
   };
 }

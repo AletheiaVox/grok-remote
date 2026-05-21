@@ -6,9 +6,14 @@
 
 import { el } from './render.js';
 
-let active = null;
+interface ActiveLightbox {
+  overlay: HTMLDivElement;
+  prevOverflow: string;
+}
 
-export function openImageLightbox(src, alt = '') {
+let active: ActiveLightbox | null = null;
+
+export function openImageLightbox(src: string, alt: string = ''): void {
   closeImageLightbox();
   if (!src) return;
 
@@ -16,8 +21,8 @@ export function openImageLightbox(src, alt = '') {
     class: 'image-lightbox__img',
     src,
     alt,
-    onclick: (ev) => { ev.stopPropagation(); },
-  });
+    onclick: (ev: MouseEvent) => { ev.stopPropagation(); },
+  }) as HTMLImageElement;
 
   const closeBtn = el('button', {
     type: 'button',
@@ -25,39 +30,35 @@ export function openImageLightbox(src, alt = '') {
     title: 'close',
     'aria-label': 'close',
     onclick: closeImageLightbox,
-  }, '×');
+  }, '×') as HTMLButtonElement;
 
   const overlay = el('div', {
     class: 'image-lightbox',
     role: 'dialog',
     'aria-label': alt || 'image preview',
     onclick: closeImageLightbox,
-  }, img, closeBtn);
+  }, img, closeBtn) as HTMLDivElement;
 
   document.body.appendChild(overlay);
   document.addEventListener('keydown', onKey);
-  // Lock body scroll while the lightbox is up.
   const prevOverflow = document.body.style.overflow;
   document.body.style.overflow = 'hidden';
   active = { overlay, prevOverflow };
-  // Trigger the fade-in on next frame so the transition runs.
   requestAnimationFrame(() => overlay.classList.add('image-lightbox--show'));
 }
 
-export function closeImageLightbox() {
+export function closeImageLightbox(): void {
   if (!active) return;
   const { overlay, prevOverflow } = active;
   active = null;
   document.removeEventListener('keydown', onKey);
   document.body.style.overflow = prevOverflow || '';
   overlay.classList.remove('image-lightbox--show');
-  // Wait for the fade-out before removing so the user sees the
-  // transition. Match the CSS duration.
   setTimeout(() => {
     if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
   }, 160);
 }
 
-function onKey(ev) {
+function onKey(ev: KeyboardEvent): void {
   if (ev.key === 'Escape') closeImageLightbox();
 }

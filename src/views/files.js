@@ -3,7 +3,7 @@
 
 import { api } from '../lib/api.js';
 import { el, escapeHtml } from '../lib/render.js';
-import { iconHtml } from '../lib/icons.js';
+import { iconHtml } from '../lib/icons';
 
 const TREE_COLLAPSED_KEY = 'grok-remote.files.treeCollapsed';
 

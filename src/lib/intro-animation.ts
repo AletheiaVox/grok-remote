@@ -9,7 +9,7 @@
 // the function returns immediately without throwing and without touching
 // the element any further (the caller is expected to remove it).
 
-export const FIGLET_GR = [
+export const FIGLET_GR: readonly string[] = [
   '  ██████╗ ██████╗  ',
   ' ██╔════╝ ██╔══██╗ ',
   ' ██║  ███╗██████╔╝ ',
@@ -18,7 +18,15 @@ export const FIGLET_GR = [
   '  ╚═════╝ ╚═╝  ╚═╝ ',
 ];
 
-const HOLE_FRAMES = [
+type Phase = 'hole' | 'pulse' | 'flash';
+
+interface Frame {
+  idx: number;
+  hold: number;
+  phase: Phase;
+}
+
+const HOLE_FRAMES: readonly string[][] = [
   ['                   ',
    '                   ',
    '                   ',
@@ -69,7 +77,7 @@ const HOLE_FRAMES = [
    '███████████████████'],
 ];
 
-const SEQUENCE = [
+const SEQUENCE: readonly Frame[] = [
   { idx: 0, hold: 60,  phase: 'hole' },
   { idx: 1, hold: 110, phase: 'hole' },
   { idx: 2, hold: 110, phase: 'hole' },
@@ -80,7 +88,7 @@ const SEQUENCE = [
   { idx: 7, hold: 55,  phase: 'flash' },
 ];
 
-function cellClass(ch, phase) {
+function cellClass(ch: string, phase: Phase): string {
   if (phase === 'flash') return 'cell-flash';
   if (phase === 'pulse') return ch === ' ' ? '' : 'cell-flash';
   if (ch === '·' || ch === '░') return 'cell-rim';
@@ -90,15 +98,17 @@ function cellClass(ch, phase) {
   return '';
 }
 
-function escapeHtml(s) {
-  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>]/g, (c) => HTML_ESCAPES[c] ?? c);
 }
 
-function colorizeLine(line, phase) {
+function colorizeLine(line: string, phase: Phase): string {
   let html = '';
-  let runCls = null;
+  let runCls: string | null = null;
   let runText = '';
-  const flush = () => {
+  const flush = (): void => {
     if (!runText) return;
     if (runCls) html += `<span class="${runCls}">${escapeHtml(runText)}</span>`;
     else html += escapeHtml(runText);
@@ -113,14 +123,14 @@ function colorizeLine(line, phase) {
   return html;
 }
 
-function sleepCancellable(ms, signal) {
+function sleepCancellable(ms: number, signal: AbortSignal | null): Promise<boolean> {
   return new Promise((resolve) => {
     if (signal && signal.aborted) { resolve(true); return; }
     const t = setTimeout(() => {
       if (signal) signal.removeEventListener('abort', onAbort);
       resolve(false);
     }, ms);
-    const onAbort = () => {
+    const onAbort = (): void => {
       clearTimeout(t);
       if (signal) signal.removeEventListener('abort', onAbort);
       resolve(true);
@@ -129,16 +139,21 @@ function sleepCancellable(ms, signal) {
   });
 }
 
-export async function playIntro(figletEl, opts = {}) {
+export interface PlayIntroOptions {
+  signal?: AbortSignal | null;
+}
+
+export async function playIntro(figletEl: HTMLElement | null | undefined, opts: PlayIntroOptions = {}): Promise<void> {
   if (!figletEl) return;
-  const signal = opts.signal || null;
+  const signal = opts.signal ?? null;
   if (signal && signal.aborted) return;
 
   figletEl.classList.add('figlet--hole');
   for (const { idx, hold, phase } of SEQUENCE) {
     if (signal && signal.aborted) return;
     const frame = HOLE_FRAMES[idx];
-    figletEl.innerHTML = frame.map(l => colorizeLine(l, phase)).join('\n');
+    if (!frame) continue;
+    figletEl.innerHTML = frame.map((l) => colorizeLine(l, phase)).join('\n');
     const aborted = await sleepCancellable(hold, signal);
     if (aborted) return;
   }

@@ -6,43 +6,39 @@
 const URL_RE = /(https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}(?:\/[^\s,)\]]*)?)/i;
 
 // Vite (and most dev servers) colorize their startup banner with ANSI escape
-// codes, e.g. "[36mhttp://localhost:[1m5177[22m/[39m".
-// The bold codes around the port mean a naive regex against the raw stream
-// captures "http://localhost:" with no port. Strip CSI sequences first so the
-// URL is contiguous before matching. Covers SGR (\x1b[...m), cursor moves,
-// and the bare ESC-prefixed sequences npm sometimes emits.
-function stripAnsi(s) {
-  if (!s) return s;
+// codes. Strip CSI sequences first so the URL is contiguous before matching.
+function stripAnsi(s: string | null | undefined): string {
+  if (!s) return '';
   // eslint-disable-next-line no-control-regex
   return s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '');
 }
 
-export function scanOutputForUrl(output) {
+export function scanOutputForUrl(output: unknown): string | null {
   if (!output || typeof output !== 'string') return null;
   const cleaned = stripAnsi(output);
   const m = cleaned.match(URL_RE);
-  if (!m) return null;
+  if (!m || !m[1]) return null;
   // 0.0.0.0 isn't browsable; rewrite to localhost.
   return m[1].replace('://0.0.0.0', '://localhost');
 }
 
-export function parsePortFromCommand(cmd) {
+export function parsePortFromCommand(cmd: unknown): number | null {
   if (!cmd || typeof cmd !== 'string') return null;
 
   // Explicit port flags first, most specific to least.
   let m = cmd.match(/--port[=\s]+(\d{2,5})/);
-  if (m) return Number(m[1]);
+  if (m && m[1]) return Number(m[1]);
   m = cmd.match(/(?:^|\s)-p[=\s]+(\d{2,5})\b/);
-  if (m) return Number(m[1]);
+  if (m && m[1]) return Number(m[1]);
   // Bind-style like "host:5173" — only when the prefix looks like a host.
   m = cmd.match(/\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{2,5})\b/);
-  if (m) return Number(m[1]);
+  if (m && m[1]) return Number(m[1]);
 
   // Framework defaults.
   if (/\bnext\s+(?:dev|start)\b/.test(cmd))                return 3000;
   if (/\b(?:vite|astro\s+dev|nuxt\s+dev|svelte-kit\s+dev|remix\s+dev)\b/.test(cmd)) return 5173;
   if (/\bgatsby\s+develop\b/.test(cmd))                    return 8000;
-  if (/\bnpm\s+(?:run\s+)?(?:dev|start)\b/.test(cmd))      return 5173; // common Vite default; will be overwritten by output scan
+  if (/\bnpm\s+(?:run\s+)?(?:dev|start)\b/.test(cmd))      return 5173;
   if (/\b(?:pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start)\b/.test(cmd)) return 5173;
   if (/\bstreamlit\s+run\b/.test(cmd))                     return 8501;
   if (/\bflask\s+run\b/.test(cmd))                         return 5000;
@@ -55,7 +51,7 @@ export function parsePortFromCommand(cmd) {
   if (/\bphp\s+artisan\s+serve\b/.test(cmd))               return 8000;
   if (/\bphp\s+-S\b/.test(cmd)) {
     const hm = cmd.match(/php\s+-S\s+[^:\s]+:(\d{2,5})/);
-    if (hm) return Number(hm[1]);
+    if (hm && hm[1]) return Number(hm[1]);
   }
   if (/\bcaddy\s+(?:run|start)\b/.test(cmd))               return 2015;
   if (/\bhttp-server\b/.test(cmd))                         return 8080;
@@ -63,18 +59,15 @@ export function parsePortFromCommand(cmd) {
   return null;
 }
 
-// Recognize a command as a dev/preview server worth showing an "open" link
-// for. This filters out generic shell commands so a random `npm install`
-// doesn't get a misleading port.
 const DEV_HINTS = /\b(?:vite|next\s+(?:dev|start)|nuxt\s+dev|astro\s+dev|svelte-kit\s+dev|remix\s+dev|gatsby\s+develop|npm\s+(?:run\s+)?(?:dev|start|serve)|(?:pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)|streamlit\s+run|flask\s+run|manage\.py\s+runserver|uvicorn|gunicorn|python\s+-m\s+http\.server|rails\s+(?:s|server)|phx\.server|jekyll\s+serve|php\s+artisan\s+serve|php\s+-S|caddy\s+(?:run|start)|http-server|\bserve\b)/;
 
-export function looksLikeDevServer(cmd) {
+export function looksLikeDevServer(cmd: unknown): boolean {
   if (!cmd || typeof cmd !== 'string') return false;
   return DEV_HINTS.test(cmd);
 }
 
 // Combined accessor. Tries output first, falls back to command parsing.
-export function inferDevServerUrl(command, output) {
+export function inferDevServerUrl(command: unknown, output?: unknown): string | null {
   const fromOutput = scanOutputForUrl(output);
   if (fromOutput) return fromOutput;
   if (!looksLikeDevServer(command)) return null;

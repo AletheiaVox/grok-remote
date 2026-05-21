@@ -14,28 +14,41 @@
 //   - After commit: inserts `/<name> ` into the textarea, closes the palette,
 //     and (if the command has `input.hint`) calls `onCommit({ command, hint })`
 //     so the host can render a `usage: /<name> <hint>` caption.
-//
-// Returns a teardown function that removes listeners and the floating panel.
 
 const VISIBLE_MAX = 8;
 const TRIGGER_RE  = /^\/([\w-]*)$/;
 
-export default function attachSlashPalette({ textarea, getCommands, onCommit }) {
+export interface SlashCommand {
+  name: string;
+  description?: string;
+  kind?: string;
+  scope?: string;
+  input?: { hint?: string | null } | null;
+  [key: string]: unknown;
+}
+
+export interface SlashPaletteOptions {
+  textarea: HTMLTextAreaElement;
+  getCommands: () => SlashCommand[] | null | undefined;
+  onCommit?: (info: { command: SlashCommand; hint: string | null }) => void;
+}
+
+export type Detach = () => void;
+
+export default function attachSlashPalette({ textarea, getCommands, onCommit }: SlashPaletteOptions): Detach {
   if (!textarea) throw new Error('attachSlashPalette: textarea required');
   if (typeof getCommands !== 'function') throw new Error('attachSlashPalette: getCommands required');
 
   const panel = document.createElement('div');
   panel.className = 'slash-palette hidden';
   panel.setAttribute('role', 'listbox');
-  // Hosted in the composer container, which is position:relative; we anchor
-  // above the textarea.
   textarea.parentElement?.appendChild(panel);
 
-  let items = [];           // filtered command list
-  let highlight = 0;        // index into items
+  let items: SlashCommand[] = [];
+  let highlight = 0;
   let open = false;
 
-  function close() {
+  function close(): void {
     if (!open) return;
     open = false;
     panel.classList.add('hidden');
@@ -44,19 +57,18 @@ export default function attachSlashPalette({ textarea, getCommands, onCommit }) 
     highlight = 0;
   }
 
-  function currentQuery() {
+  function currentQuery(): string | null {
     const v = textarea.value || '';
     const m = v.match(TRIGGER_RE);
-    return m ? m[1] : null;
+    return m && m[1] !== undefined ? m[1] : null;
   }
 
-  function filterCommands(q) {
+  function filterCommands(q: string | null): SlashCommand[] {
     const all = getCommands() || [];
     const lc = (q || '').toLowerCase();
     if (!lc) return all.slice();
-    // Prefer prefix matches, then substring matches.
-    const prefix = [];
-    const substr = [];
+    const prefix: SlashCommand[] = [];
+    const substr: SlashCommand[] = [];
     for (const c of all) {
       const name = (c?.name || '').toLowerCase();
       if (!name) continue;
@@ -66,20 +78,20 @@ export default function attachSlashPalette({ textarea, getCommands, onCommit }) 
     return [...prefix, ...substr];
   }
 
-  function render() {
+  function render(): void {
     panel.replaceChildren();
     if (!items.length) {
       panel.classList.add('hidden');
       return;
     }
     panel.classList.remove('hidden');
-    const list = items.slice(0, VISIBLE_MAX * 2); // allow scroll past visible
+    const list = items.slice(0, VISIBLE_MAX * 2);
     list.forEach((cmd, idx) => {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'slash-palette-item' + (idx === highlight ? ' is-active' : '');
       row.setAttribute('role', 'option');
-      row.dataset.index = String(idx);
+      row.dataset['index'] = String(idx);
 
       const name = document.createElement('span');
       name.className = 'sp-name';
@@ -99,8 +111,7 @@ export default function attachSlashPalette({ textarea, getCommands, onCommit }) 
       }
       row.appendChild(desc);
 
-      row.addEventListener('mousedown', (ev) => {
-        // mousedown (not click) so the textarea doesn't lose focus first.
+      row.addEventListener('mousedown', (ev: MouseEvent) => {
         ev.preventDefault();
         highlight = idx;
         commit();
@@ -115,7 +126,7 @@ export default function attachSlashPalette({ textarea, getCommands, onCommit }) 
     scrollHighlightIntoView();
   }
 
-  function updateActive() {
+  function updateActive(): void {
     const rows = panel.querySelectorAll('.slash-palette-item');
     rows.forEach((row, idx) => {
       row.classList.toggle('is-active', idx === highlight);
@@ -123,14 +134,14 @@ export default function attachSlashPalette({ textarea, getCommands, onCommit }) 
     scrollHighlightIntoView();
   }
 
-  function scrollHighlightIntoView() {
-    const row = panel.querySelector('.slash-palette-item.is-active');
+  function scrollHighlightIntoView(): void {
+    const row = panel.querySelector('.slash-palette-item.is-active') as HTMLElement | null;
     if (row && typeof row.scrollIntoView === 'function') {
       row.scrollIntoView({ block: 'nearest' });
     }
   }
 
-  function maybeOpen() {
+  function maybeOpen(): void {
     const q = currentQuery();
     if (q === null) { close(); return; }
     items = filterCommands(q);
@@ -140,32 +151,30 @@ export default function attachSlashPalette({ textarea, getCommands, onCommit }) 
     render();
   }
 
-  function commit() {
+  function commit(): void {
     if (!open || !items.length) return;
     const cmd = items[Math.max(0, Math.min(highlight, items.length - 1))];
     if (!cmd || !cmd.name) { close(); return; }
     const insert = '/' + cmd.name + ' ';
     textarea.value = insert;
-    // Place caret at the end.
     try {
       const pos = insert.length;
       textarea.setSelectionRange(pos, pos);
     } catch { /* ignore */ }
     close();
     textarea.focus();
-    const hint = cmd?.input?.hint || null;
+    const hint = cmd?.input?.hint ?? null;
     if (typeof onCommit === 'function') {
       try { onCommit({ command: cmd, hint }); } catch { /* ignore */ }
     }
-    // Trigger an input event so any other listeners (autosize etc.) update.
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  function onInput() {
+  function onInput(): void {
     maybeOpen();
   }
 
-  function onKeydown(ev) {
+  function onKeydown(ev: KeyboardEvent): void {
     if (!open) return;
     if (ev.key === 'ArrowDown') {
       ev.preventDefault();
@@ -193,20 +202,17 @@ export default function attachSlashPalette({ textarea, getCommands, onCommit }) 
     }
   }
 
-  function onBlur() {
-    // Delay so a mousedown on a palette row can still fire.
+  function onBlur(): void {
     setTimeout(() => {
       if (document.activeElement !== textarea) close();
     }, 120);
   }
 
   textarea.addEventListener('input', onInput);
-  // Use capture so we beat the composer's own Enter handler when the palette
-  // is open.
   textarea.addEventListener('keydown', onKeydown, true);
   textarea.addEventListener('blur', onBlur);
 
-  return function detach() {
+  return function detach(): void {
     textarea.removeEventListener('input', onInput);
     textarea.removeEventListener('keydown', onKeydown, true);
     textarea.removeEventListener('blur', onBlur);

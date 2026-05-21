@@ -5,7 +5,7 @@
 // This file owns the modal lifecycle. Callers just call openUpdateModal({...}).
 
 import { el } from '../lib/render.js';
-import { iconHtml } from '../lib/icons.js';
+import { iconHtml } from '../lib/icons';
 import { api } from '../lib/api.js';
 
 const STEP_LABELS = {

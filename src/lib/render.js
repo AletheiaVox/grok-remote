@@ -157,7 +157,7 @@ function renderUserAttachments(attachments, agentId) {
         ev.preventDefault();
         // Lazy import so the chat hot-path bundle doesn't pull in lightbox
         // chrome until the first click actually happens.
-        import('./image-lightbox.js').then((m) => m.openImageLightbox(att.src, att.name));
+        import('./image-lightbox').then((m) => m.openImageLightbox(att.src, att.name));
       },
     },
       el('img', {

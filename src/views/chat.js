@@ -13,12 +13,12 @@
 
 import Split from 'split.js';
 import { api } from '../lib/api.js';
-import { openStream } from '../lib/sse.js';
+import { openStream } from '../lib/sse';
 import { mountFilesTab, unmountFilesTab } from './files.js';
 import { mountTraceTab, unmountTraceTab } from './trace.js';
 import { mountScoped as mountFlowTab, unmount as unmountFlowTab } from './system/flow.js';
-import attachSlashPalette from '../lib/slash-palette.js';
-import { setupImageAttach } from '../lib/attach-images.js';
+import attachSlashPalette from '../lib/slash-palette';
+import { setupImageAttach } from '../lib/attach-images';
 import {
   el,
   renderUserBubble,
@@ -33,9 +33,9 @@ import {
   renderToast,
 } from '../lib/render.js';
 import { copyToClipboard, serializeConversation, serializeResumeCommand } from '../lib/copy';
-import { iconHtml } from '../lib/icons.js';
+import { iconHtml } from '../lib/icons';
 import { fmtTokens } from '../lib/format';
-import { playIntro } from '../lib/intro-animation.js';
+import { playIntro } from '../lib/intro-animation';
 
 export class ChatView {
   constructor() {

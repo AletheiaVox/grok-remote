@@ -9,7 +9,7 @@
 // padding-bottom (or height calc) so nothing is hidden behind it.
 
 import { el } from './render.js';
-import { iconHtml } from './icons.js';
+import { iconHtml } from './icons';
 import { api } from './api.js';
 import { openUpdateModal } from '../views/update-modal.js';
 import { openChangelogModal } from '../views/changelog-modal.js';

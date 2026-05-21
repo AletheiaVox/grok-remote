@@ -6,30 +6,38 @@
 //   3. Drive the #install-banner element (show/hide, button wiring).
 //   4. Provide a manual hint for iOS Safari, which never fires the prompt event.
 
-let deferredPrompt = null;
-let bannerEl = null;
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): void;
+  readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed' | string; platform?: string }>;
+}
 
-const isIos = () =>
+interface SafariNavigator extends Navigator {
+  standalone?: boolean;
+}
+
+let deferredPrompt: BeforeInstallPromptEvent | null = null;
+let bannerEl: HTMLElement | null = null;
+
+const isIos = (): boolean =>
   typeof navigator !== 'undefined' &&
   /iPad|iPhone|iPod/.test(navigator.userAgent || '');
 
-export function isInstalled() {
+export function isInstalled(): boolean {
   if (typeof window === 'undefined' || !window.matchMedia) return false;
   if (window.matchMedia('(display-mode: standalone)').matches) return true;
   // iOS Safari exposes navigator.standalone instead.
-  if (typeof navigator !== 'undefined' && navigator.standalone === true) return true;
+  if (typeof navigator !== 'undefined' && (navigator as SafariNavigator).standalone === true) return true;
   return false;
 }
 
-export function canInstall() {
+export function canInstall(): boolean {
   if (isInstalled()) return false;
   if (deferredPrompt) return true;
-  // iOS users have no prompt API, but they can still install via Share sheet.
   if (isIos()) return true;
   return false;
 }
 
-function dismissed() {
+function dismissed(): boolean {
   try {
     return sessionStorage.getItem('install-dismissed') === '1';
   } catch {
@@ -37,18 +45,17 @@ function dismissed() {
   }
 }
 
-function setDismissed() {
+function setDismissed(): void {
   try {
     sessionStorage.setItem('install-dismissed', '1');
-  } catch {}
+  } catch { /* ignore */ }
 }
 
-function updateBanner() {
+function updateBanner(): void {
   if (!bannerEl) bannerEl = document.getElementById('install-banner');
   if (!bannerEl) return;
   if (canInstall() && !dismissed()) {
     bannerEl.hidden = false;
-    // Tweak label/hint for iOS where there is no prompt API.
     const label = bannerEl.querySelector('[data-role="label"]');
     const installBtn = bannerEl.querySelector('[data-action="install"]');
     if (isIos() && !deferredPrompt) {
@@ -63,8 +70,12 @@ function updateBanner() {
   }
 }
 
-export async function installApp() {
-  // iOS path: no prompt API, just acknowledge so the banner can be dismissed.
+export interface InstallResult {
+  outcome: string;
+  platform?: string;
+}
+
+export async function installApp(): Promise<InstallResult> {
   if (isIos() && !deferredPrompt) {
     setDismissed();
     updateBanner();
@@ -87,25 +98,24 @@ export async function installApp() {
   }
 }
 
-export function dismissInstall() {
+export function dismissInstall(): void {
   setDismissed();
   updateBanner();
 }
 
-export function registerPwa() {
+export function registerPwa(): void {
   if (typeof window === 'undefined') return;
 
-  // Wire banner buttons (idempotent).
   bannerEl = document.getElementById('install-banner');
-  if (bannerEl && !bannerEl.dataset.wired) {
-    bannerEl.dataset.wired = '1';
-    bannerEl.addEventListener('click', (ev) => {
+  if (bannerEl && !bannerEl.dataset['wired']) {
+    bannerEl.dataset['wired'] = '1';
+    bannerEl.addEventListener('click', (ev: MouseEvent) => {
       const target = ev.target;
       if (!(target instanceof HTMLElement)) return;
       const action = target.getAttribute('data-action');
       if (action === 'install') {
         ev.preventDefault();
-        installApp();
+        void installApp();
       } else if (action === 'dismiss') {
         ev.preventDefault();
         dismissInstall();
@@ -113,9 +123,9 @@ export function registerPwa() {
     });
   }
 
-  window.addEventListener('beforeinstallprompt', (ev) => {
+  window.addEventListener('beforeinstallprompt', (ev: Event) => {
     ev.preventDefault();
-    deferredPrompt = ev;
+    deferredPrompt = ev as BeforeInstallPromptEvent;
     updateBanner();
   });
 
@@ -125,10 +135,8 @@ export function registerPwa() {
     updateBanner();
   });
 
-  // Initial render (covers iOS path where the prompt event never fires).
   updateBanner();
 
-  // Register the service worker on https or localhost only.
   if ('serviceWorker' in navigator) {
     const host = location.hostname;
     const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '::1';

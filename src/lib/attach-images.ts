@@ -7,73 +7,97 @@
 //   ctl.clear()          - wipe all attachments and re-render
 //   ctl.refreshSupport() - re-evaluate canAttachImages() and re-render notice
 //   ctl.destroy()        - detach all listeners and remove DOM
-//
-// Sources:
-//   - Paste: clipboard images pasted into `textarea` are captured.
-//   - File input: clicking the host-rendered "Attach image" button opens
-//     `fileInput` (a hidden <input type=file accept=image/* multiple>).
-//   - Drag and drop: image files dropped on `container` are captured.
-//
-// Validation: <=5 attachments total, each <=5 MB, MIME must be one of
-// image/png|jpeg|webp|gif. Rejections are surfaced via onChange's `error`.
-//
-// `canAttachImages` is a function returning bool (the active agent's
-// promptCapabilities.image). When false, attachments are blocked at the
-// source and a muted notice is rendered.
 
 const MAX_ATTACHMENTS = 5;
 const MAX_BYTES       = 5 * 1024 * 1024;
-const ALLOWED_MIME    = new Set([
+const ALLOWED_MIME    = new Set<string>([
   'image/png', 'image/jpeg', 'image/webp', 'image/gif',
 ]);
 
-export function setupImageAttach({
-  container,
-  textarea,
-  fileInput,
-  canAttachImages,
-  onChange,
-} = {}) {
+export interface Attachment {
+  id: string;
+  kind: 'image';
+  name: string;
+  size: number;
+  mimeType: string;
+  dataBase64: string;
+  dataUrl: string;
+}
+
+export interface PublicAttachment {
+  kind: 'image';
+  name: string;
+  size: number;
+  mimeType: string;
+  dataBase64: string;
+}
+
+export interface AttachChangeEvent {
+  attachments: Attachment[];
+  error?: string;
+}
+
+export interface SetupImageAttachOptions {
+  container: HTMLElement;
+  textarea?: HTMLTextAreaElement | null;
+  fileInput?: HTMLInputElement | null;
+  canAttachImages?: () => boolean;
+  onChange?: (event: AttachChangeEvent) => void;
+}
+
+export interface AttachController {
+  getAttachments(): PublicAttachment[];
+  clear(): void;
+  refreshSupport(): void;
+  isSupported(): boolean;
+  destroy(): void;
+}
+
+interface ShowErrorFn {
+  (msg: string): void;
+  _t?: ReturnType<typeof setTimeout>;
+}
+
+export function setupImageAttach(
+  options: SetupImageAttachOptions,
+): AttachController {
+  const { container, textarea, fileInput, canAttachImages, onChange } = options;
   if (!container) throw new Error('setupImageAttach: container required');
 
-  // Attachments are always supported now: the server saves them to
-  // <cwd>/uploads/ and references them in the prompt text, so any model can
-  // see them through its file or terminal tools. The legacy callback is
-  // ignored and `supported()` always returns true.
-  const supported = () => true;
+  // Attachments are always supported now; the server saves them to
+  // <cwd>/uploads/ and references them in the prompt text.
+  const supported = (): boolean => true;
   void canAttachImages;
 
   const pills = document.createElement('div');
   pills.className = 'attach-pills hidden';
   container.appendChild(pills);
 
-  // Notice element is kept but only used for transient errors (size, mime).
   const notice = document.createElement('div');
   notice.className = 'attach-notice hidden';
   container.appendChild(notice);
 
-  /** @type {{ id:string, kind:'image', name:string, size:number, mimeType:string, dataBase64:string, dataUrl:string }[]} */
-  let attachments = [];
+  let attachments: Attachment[] = [];
   let nextId = 1;
   let destroyed = false;
 
-  function emit(event) {
+  function emit(event: Partial<AttachChangeEvent>): void {
     if (typeof onChange !== 'function') return;
-    try { onChange({ attachments: attachments.slice(), ...(event || {}) }); }
+    try { onChange({ attachments: attachments.slice(), ...(event || {}) } as AttachChangeEvent); }
     catch { /* ignore */ }
   }
 
-  function emitError(msg) {
+  function emitError(msg: string): void {
     emit({ error: msg });
   }
 
-  function fmtSize(n) {
+  function fmtSize(n: number): string {
     if (n < 1024) return `${n} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
     return `${(n / (1024 * 1024)).toFixed(2)} MB`;
   }
 
-  function render() {
+  function render(): void {
     pills.replaceChildren();
     if (!attachments.length) {
       pills.classList.add('hidden');
@@ -82,7 +106,7 @@ export function setupImageAttach({
       for (const att of attachments) {
         const pill = document.createElement('div');
         pill.className = 'attach-pill';
-        pill.dataset.id = att.id;
+        pill.dataset['id'] = att.id;
 
         const thumb = document.createElement('img');
         thumb.className = 'attach-pill-thumb';
@@ -107,7 +131,7 @@ export function setupImageAttach({
         rm.className = 'attach-pill-remove';
         rm.setAttribute('aria-label', 'remove attachment');
         rm.textContent = 'x';
-        rm.addEventListener('click', (ev) => {
+        rm.addEventListener('click', (ev: MouseEvent) => {
           ev.preventDefault();
           removeAttachment(att.id);
         });
@@ -119,43 +143,43 @@ export function setupImageAttach({
     renderNotice();
   }
 
-  function renderNotice() {
-    // Notice is only shown for transient errors (set via showError below).
+  function renderNotice(): void {
     notice.classList.add('hidden');
     notice.textContent = '';
   }
-  function showError(msg) {
+
+  const showError: ShowErrorFn = (msg: string): void => {
     notice.textContent = msg;
     notice.classList.remove('hidden');
-    clearTimeout(showError._t);
+    if (showError._t) clearTimeout(showError._t);
     showError._t = setTimeout(() => renderNotice(), 4000);
-  }
+  };
 
-  function removeAttachment(id) {
+  function removeAttachment(id: string): void {
     const before = attachments.length;
-    attachments = attachments.filter(a => a.id !== id);
+    attachments = attachments.filter((a) => a.id !== id);
     if (attachments.length !== before) {
       render();
       emit({});
     }
   }
 
-  async function readAsDataUrl(blob) {
-    return await new Promise((resolve, reject) => {
+  async function readAsDataUrl(blob: Blob): Promise<string> {
+    return await new Promise<string>((resolve, reject) => {
       const r = new FileReader();
-      r.onload = () => resolve(String(r.result || ''));
-      r.onerror = () => reject(r.error || new Error('read failed'));
+      r.onload = (): void => resolve(String(r.result || ''));
+      r.onerror = (): void => reject(r.error || new Error('read failed'));
       r.readAsDataURL(blob);
     });
   }
 
-  function pickName(blob, fallback) {
-    if (blob && typeof blob.name === 'string' && blob.name) return blob.name;
+  function pickName(blob: File | Blob, fallback?: string): string {
+    if (blob && typeof (blob as File).name === 'string' && (blob as File).name) return (blob as File).name;
     const ext = (blob && blob.type && blob.type.split('/')[1]) || 'bin';
     return `${fallback || 'pasted'}-${Date.now()}.${ext}`;
   }
 
-  async function addBlob(blob, suggestedName) {
+  async function addBlob(blob: File | Blob | null | undefined, suggestedName?: string): Promise<boolean> {
     if (attachments.length >= MAX_ATTACHMENTS) {
       emitError(`Attachment limit (${MAX_ATTACHMENTS}) reached.`);
       return false;
@@ -170,13 +194,17 @@ export function setupImageAttach({
       emitError(`Image is too large (max ${Math.round(MAX_BYTES / (1024 * 1024))} MB).`);
       return false;
     }
-    let dataUrl;
+    let dataUrl: string;
     try { dataUrl = await readAsDataUrl(blob); }
-    catch (err) { emitError(`Failed to read image: ${err.message}`); return false; }
+    catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      emitError(`Failed to read image: ${msg}`);
+      return false;
+    }
     const comma = dataUrl.indexOf(',');
     const dataBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : '';
     const name = pickName(blob, suggestedName);
-    const att = {
+    const att: Attachment = {
       id: 'att-' + (nextId++),
       kind: 'image',
       name,
@@ -191,57 +219,53 @@ export function setupImageAttach({
     return true;
   }
 
-  async function addFiles(files, sourceLabel) {
-    if (!files || !files.length) return;
-    for (const f of files) {
+  async function addFiles(files: File[] | FileList, sourceLabel?: string): Promise<void> {
+    if (!files || files.length === 0) return;
+    for (const f of Array.from(files)) {
       if (destroyed) return;
       await addBlob(f, sourceLabel);
     }
   }
 
-  // ── paste ───────────────────────────────────────────────────
-  async function onPaste(ev) {
+  async function onPaste(ev: ClipboardEvent): Promise<void> {
     if (destroyed) return;
     const items = ev?.clipboardData?.items;
     if (!items || !items.length) return;
-    const blobs = [];
-    for (const it of items) {
+    const blobs: File[] = [];
+    for (const it of Array.from(items)) {
       if (it.kind === 'file' && it.type && it.type.startsWith('image/')) {
         const f = it.getAsFile();
         if (f) blobs.push(f);
       }
     }
     if (!blobs.length) return;
-    // Image found: prevent default (don't paste path text).
     ev.preventDefault();
     for (const b of blobs) {
       await addBlob(b, 'pasted');
     }
   }
 
-  // ── drag-and-drop ───────────────────────────────────────────
   let dragDepth = 0;
-  function onDragEnter(ev) {
+  function onDragEnter(ev: DragEvent): void {
     if (!hasImageDrag(ev)) return;
     ev.preventDefault();
     dragDepth++;
     container.classList.add('attach-dropping');
   }
-  function onDragOver(ev) {
+  function onDragOver(ev: DragEvent): void {
     if (!hasImageDrag(ev)) return;
     ev.preventDefault();
-    try { ev.dataTransfer.dropEffect = 'copy'; } catch { /* ignore */ }
+    try { if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy'; } catch { /* ignore */ }
   }
-  function onDragLeave(ev) {
+  function onDragLeave(ev: DragEvent): void {
     if (!hasImageDrag(ev)) return;
     dragDepth = Math.max(0, dragDepth - 1);
     if (dragDepth === 0) container.classList.remove('attach-dropping');
   }
-  async function onDrop(ev) {
+  async function onDrop(ev: DragEvent): Promise<void> {
     if (!ev.dataTransfer) return;
-    const files = Array.from(ev.dataTransfer.files || []).filter(f => f.type && f.type.startsWith('image/'));
+    const files = Array.from(ev.dataTransfer.files || []).filter((f) => f.type && f.type.startsWith('image/'));
     if (!files.length) {
-      // Let other handlers (e.g. text drops) process normally.
       dragDepth = 0;
       container.classList.remove('attach-dropping');
       return;
@@ -251,38 +275,36 @@ export function setupImageAttach({
     container.classList.remove('attach-dropping');
     await addFiles(files, 'dropped');
   }
-  function hasImageDrag(ev) {
+  function hasImageDrag(ev: DragEvent): boolean {
     const types = ev?.dataTransfer?.types;
     if (!types) return false;
-    // Some browsers expose only "Files" for image drags.
-    for (const t of types) {
+    for (const t of Array.from(types)) {
       if (t === 'Files' || (typeof t === 'string' && t.startsWith('image/'))) return true;
     }
     return false;
   }
 
-  // ── file input ──────────────────────────────────────────────
-  async function onFileChange(ev) {
-    const files = ev?.target?.files;
+  async function onFileChange(ev: Event): Promise<void> {
+    const target = ev?.target as HTMLInputElement | null;
+    const files = target?.files;
     if (!files || !files.length) return;
     await addFiles(Array.from(files), 'file');
-    try { ev.target.value = ''; } catch { /* ignore */ }
+    try { if (target) target.value = ''; } catch { /* ignore */ }
   }
 
-  // attach listeners
-  if (textarea) textarea.addEventListener('paste', onPaste);
-  container.addEventListener('dragenter', onDragEnter);
-  container.addEventListener('dragover',  onDragOver);
-  container.addEventListener('dragleave', onDragLeave);
-  container.addEventListener('drop',      onDrop);
-  if (fileInput) fileInput.addEventListener('change', onFileChange);
+  if (textarea) textarea.addEventListener('paste', onPaste as EventListener);
+  container.addEventListener('dragenter', onDragEnter as EventListener);
+  container.addEventListener('dragover',  onDragOver as EventListener);
+  container.addEventListener('dragleave', onDragLeave as EventListener);
+  container.addEventListener('drop',      onDrop as EventListener);
+  if (fileInput) fileInput.addEventListener('change', onFileChange as EventListener);
 
-  // initial render (mostly the notice when unsupported)
   render();
+  void showError;
 
   return {
-    getAttachments() {
-      return attachments.map(a => ({
+    getAttachments(): PublicAttachment[] {
+      return attachments.map((a) => ({
         kind: a.kind,
         name: a.name,
         size: a.size,
@@ -290,24 +312,24 @@ export function setupImageAttach({
         dataBase64: a.dataBase64,
       }));
     },
-    clear() {
+    clear(): void {
       if (!attachments.length) { renderNotice(); return; }
       attachments = [];
       render();
       emit({});
     },
-    refreshSupport() {
+    refreshSupport(): void {
       renderNotice();
     },
-    isSupported() { return supported(); },
-    destroy() {
+    isSupported(): boolean { return supported(); },
+    destroy(): void {
       destroyed = true;
-      if (textarea) textarea.removeEventListener('paste', onPaste);
-      container.removeEventListener('dragenter', onDragEnter);
-      container.removeEventListener('dragover',  onDragOver);
-      container.removeEventListener('dragleave', onDragLeave);
-      container.removeEventListener('drop',      onDrop);
-      if (fileInput) fileInput.removeEventListener('change', onFileChange);
+      if (textarea) textarea.removeEventListener('paste', onPaste as EventListener);
+      container.removeEventListener('dragenter', onDragEnter as EventListener);
+      container.removeEventListener('dragover',  onDragOver as EventListener);
+      container.removeEventListener('dragleave', onDragLeave as EventListener);
+      container.removeEventListener('drop',      onDrop as EventListener);
+      if (fileInput) fileInput.removeEventListener('change', onFileChange as EventListener);
       try { pills.remove(); } catch { /* ignore */ }
       try { notice.remove(); } catch { /* ignore */ }
       attachments = [];
