@@ -188,9 +188,11 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 
 | Status | File                                  | Target                                  |
 |--------|---------------------------------------|------------------------------------------|
-| [ ]    | test/install-mode.test.js             | test/install-mode.test.ts                |
-| [ ]    | test/launch.test.js                   | test/launch.test.ts                      |
-| [ ]    | test/user-attachments.test.js         | test/user-attachments.test.ts            |
+| [x]    | test/install-mode.test.js             | test/install-mode.test.ts                |
+| [x]    | test/launch.test.js                   | test/launch.test.ts                      |
+| [x]    | test/user-attachments.test.js         | test/user-attachments.test.ts            |
+| [x]    | (new)                                 | test/format.test.ts                      |
+| [x]    | (new)                                 | test/dev-url.test.ts                     |
 | [ ]    | (new)                                 | test/render-todo.test.ts                 |
 | [ ]    | (new)                                 | test/render-attachments.test.ts          |
 | [ ]    | (new)                                 | test/agent-manager.test.ts               |
