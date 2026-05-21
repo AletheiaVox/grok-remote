@@ -264,11 +264,21 @@ The server itself handles SIGTERM / SIGINT gracefully: it disconnects every live
 npm install
 npm start             # backend on :7910 (serves dist/ + /api/*)
 npm run dev           # Vite dev server on :7911, proxies /api → 7910
+npm run typecheck     # tsc --noEmit
+npm test              # unit tests (node:test + tsx)
+npm run test:integration  # boots server.ts and hits /api/*; needs grok logged in
 ```
 
-- Frontend lives under `src/`. Vanilla JS + Vite. Views: `src/views/{agents,chat,settings,files}.js`. Helpers: `src/lib/{api,sse,render,themes,copy,slash-palette,attach-images,pwa}.js`.
-- Backend is plain Node http. Modules: `lib/{acp-client,agent-manager,terminal-host,fs-host,permission-host,sse,history,settings}.js`.
-- No external runtime deps. Vite is the only devDependency.
+- Frontend lives under `src/`. Vanilla TypeScript + Vite. Views: `src/views/{agents,chat,settings,files}.ts`. Helpers: `src/lib/{api,sse,render,themes,copy,slash-palette,attach-images,pwa}.ts`. The live-flow page (`src/views/system/flow.tsx`) is the only React surface.
+- Backend is plain Node http. Modules: `lib/{acp-client,agent-manager,terminal-host,fs-host,permission-host,sse,history,settings}.ts`.
+- Build is Vite (esbuild type-strip); type-checking is a separate `npm run typecheck` step.
+- No external runtime deps. Vite + tsx + typescript are the devDependencies.
+
+### Tests
+
+Unit tests live under `test/*.test.ts` and run with `node --import tsx --test`. They cover pure helpers (`src/lib/{format,copy,themes,icons,render}`, `lib/{install-mode,launch,dev-url,retention,grok-cli,routes/helpers,sse,history,fs-host,terminal-host,permission-host}`) plus the agent-manager filename/upload helpers.
+
+Integration tests live under `test/integration/*.test.ts` and are gated on `RUN_LOCAL_INTEGRATION=1`. The shared `_helpers.ts` boots the real `server.ts` via `tsx` on a random high port, polls `/api/health` until ready, and exercises the public endpoints (`/api/hello`, `/api/version/current`, `/api/agents`, `/api/agents/stream`, `/api/settings`, `/api/system/health`). They need a logged-in `grok` CLI on the host because `/api/system/health` shells out to `grok inspect`. Skipped without the env var.
 
 `experiments/probe.js` is a small standalone ACP client (~120 lines) that talks to `grok agent stdio` and dumps every JSON-RPC frame to a log file. Run it to regenerate the traces summarized in [PROTOCOL.md](./PROTOCOL.md):
 
@@ -284,38 +294,60 @@ node experiments/probe.js "Run \`ls\` and tell me what you see." exp2.log
 ```
 grok-remote/
 ├── install.sh                  # bash bootstrap (verifies Node, hands off)
-├── installer.js                # animated 13-step installer
+├── installer.ts                # animated 13-step installer
 ├── bin/gr                      # the gr CLI
-├── server.js                   # Node http server + REST/SSE
+├── server.ts                   # Node http server + REST/SSE
 ├── ecosystem.config.cjs        # PM2 config
-├── vite.config.js              # Vite dev server config
+├── vite.config.ts              # Vite dev server config
+├── tsconfig.json
+├── tsconfig.server.json
 ├── index.html                  # dashboard entry
 ├── lib/                        # backend modules (ACP host + persistence)
-│   ├── acp-client.js
-│   ├── agent-manager.js
-│   ├── terminal-host.js
-│   ├── fs-host.js
-│   ├── permission-host.js
-│   ├── sse.js
-│   ├── history.js
-│   └── settings.js
+│   ├── acp-client.ts
+│   ├── agent-manager.ts
+│   ├── terminal-host.ts
+│   ├── fs-host.ts
+│   ├── permission-host.ts
+│   ├── sse.ts
+│   ├── history.ts
+│   ├── settings.ts
+│   ├── grok-cli.ts
+│   ├── dev-url.ts
+│   ├── install-mode.ts
+│   ├── launch.ts
+│   ├── retention.ts
+│   ├── trace-host.ts
+│   ├── version-update.ts
+│   └── routes/                 # request handlers (system/* etc.)
 ├── src/                        # frontend modules
-│   ├── main.js                 # router + intro animation
+│   ├── main.ts                 # router + intro animation
 │   ├── style.css               # palette + dashboard CSS
 │   ├── views/
-│   │   ├── agents.js
-│   │   ├── chat.js
-│   │   ├── settings.js
-│   │   └── files.js
+│   │   ├── agents.ts
+│   │   ├── chat.ts
+│   │   ├── settings.ts
+│   │   ├── files.ts
+│   │   ├── trace.ts
+│   │   ├── changelog-modal.ts
+│   │   ├── update-modal.ts
+│   │   └── system/             # settings sub-pages, flow.tsx, …
 │   └── lib/
-│       ├── api.js              # fetch wrapper
-│       ├── sse.js              # EventSource helper
-│       ├── render.js           # tiny DOM builder + markdown-light
-│       ├── themes.js
-│       ├── copy.js
-│       ├── slash-palette.js
-│       ├── attach-images.js
-│       └── pwa.js
+│       ├── api.ts              # fetch wrapper
+│       ├── sse.ts              # EventSource helper
+│       ├── render.ts           # tiny DOM builder + markdown-light
+│       ├── themes.ts
+│       ├── copy.ts
+│       ├── slash-palette.ts
+│       ├── attach-images.ts
+│       ├── image-lightbox.ts
+│       ├── intro-animation.ts
+│       ├── icons.ts
+│       ├── version-footer.ts
+│       ├── format.ts
+│       └── pwa.ts
+├── test/                       # unit + integration tests (node:test + tsx)
+│   ├── *.test.ts               # ~21 unit suites, pure helpers
+│   └── integration/            # spawns server.ts, gated on RUN_LOCAL_INTEGRATION
 ├── public/                     # PWA assets (manifest, sw, icons)
 ├── experiments/                # ACP protocol traces + probe.js
 ├── PROTOCOL.md                 # wire format + rendering rules

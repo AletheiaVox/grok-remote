@@ -239,10 +239,10 @@ logged-in `grok` CLI on the host.
 
 ### Phase 10 — final sweep
 
-- [ ] turn off `allowJs` in tsconfig (no `.js` left in `src/` or `lib/` — safe)
+- [x] turn off `allowJs` in tsconfig (also dropped `.js`/`.jsx` globs from `include`)
 - [x] delete any remaining `.js` files in `src/` and `lib/` (only `experiments/probe.js` left, already excluded)
-- [ ] update README's repo layout section
-- [ ] document local integration test runner in README
+- [x] update README's repo layout section (lib/ and src/ trees retyped + new modules listed)
+- [x] document local integration test runner in README (Develop > Tests subsection)
 - [ ] remove `// @ts-nocheck` from `src/views/system/flow.tsx` and add real types
 - [ ] remove `// @ts-nocheck` from `src/views/chat.ts` and add real types
 - [x] fix backlog of `tsc --noEmit` errors accumulated through phases 4-6
