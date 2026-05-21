@@ -195,6 +195,8 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | (new)                                 | test/dev-url.test.ts                     |
 | [x]    | (new)                                 | test/copy.test.ts                        |
 | [x]    | (new)                                 | test/themes.test.ts                      |
+| [x]    | (new)                                 | test/icons.test.ts                       |
+| [x]    | (new)                                 | test/sse-ring.test.ts                    |
 | [ ]    | (new)                                 | test/render-todo.test.ts                 |
 | [ ]    | (new)                                 | test/render-attachments.test.ts          |
 | [ ]    | (new)                                 | test/agent-manager.test.ts               |
