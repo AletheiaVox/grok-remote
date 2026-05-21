@@ -242,3 +242,164 @@ export function truncCmd(s: unknown): string {
   if (t.length <= 40) return t || '(no command)';
   return t.slice(0, 37) + '...';
 }
+
+/** Per-node-type closed and (worst-case) open pixel heights. Mirrored from
+ * style.css so dagre never under-reserves space when laying out. */
+export interface NodeDim { closed: number; open: number }
+
+export const NODE_HEIGHTS: Record<string, NodeDim> = {
+  agent:      { closed: 135, open: 135 },
+  tool:       { closed: 42,  open: 280 },
+  group:      { closed: 56,  open: 56 },
+  subAgent:   { closed: 138, open: 340 },
+  bgTask:     { closed: 78,  open: 78 },
+  milestone:  { closed: 50,  open: 50 },
+};
+
+export const NODE_WIDTHS: Record<string, NodeDim> = {
+  agent:      { closed: 220, open: 220 },
+  tool:       { closed: 180, open: 340 },
+  group:      { closed: 180, open: 180 },
+  subAgent:   { closed: 180, open: 280 },
+  bgTask:     { closed: 220, open: 220 },
+  milestone:  { closed: 200, open: 200 },
+};
+
+/** Look up the rendered height for a node type. Unknown types fall back to
+ * the tool dimensions so dagre always gets a sane number. */
+export function nodeKind(typeName: string, isOpen: boolean): number {
+  const h = NODE_HEIGHTS[typeName] || NODE_HEIGHTS.tool!;
+  return isOpen ? h.open : h.closed;
+}
+
+/** Look up the rendered width for a node type. Same fallback as nodeKind. */
+export function nodeWidth(typeName: string, isOpen: boolean): number {
+  const w = NODE_WIDTHS[typeName] || NODE_WIDTHS.tool!;
+  return isOpen ? w.open : w.closed;
+}
+
+// Sub-agent id extraction.
+//
+// Pluck the sub-agent's session id from a sub record. Two sources:
+//   1. SubagentCompleted rawOutput.subagent_id — set when the sub-agent
+//      completed inline and emitted its final payload.
+//   2. The spawn-ack content text "subagent_id: <uuid>" — used by
+//      run_in_background=true spawns (they don't get a SubagentCompleted).
+// Caller is expected to cache the result on the sub record.
+export const SUBAGENT_ID_RE = /subagent_id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+
+interface SubRecord {
+  rawOutput?: unknown;
+  response?: unknown;
+}
+
+export function extractSubagentId(sub: unknown): string | null {
+  if (!sub || typeof sub !== 'object') return null;
+  const s = sub as SubRecord;
+  const ro = s.rawOutput;
+  if (ro && typeof ro === 'object') {
+    const r = ro as { subagent_id?: unknown; text?: unknown };
+    if (typeof r.subagent_id === 'string' && r.subagent_id) return r.subagent_id;
+    if (typeof r.text === 'string') {
+      const m = r.text.match(SUBAGENT_ID_RE);
+      if (m && m[1]) return m[1];
+    }
+  }
+  if (Array.isArray(s.response)) {
+    for (const block of s.response) {
+      const t = block && typeof block === 'object' && typeof (block as { text?: unknown }).text === 'string'
+        ? (block as { text: string }).text
+        : '';
+      const m = t.match(SUBAGENT_ID_RE);
+      if (m && m[1]) return m[1];
+    }
+  }
+  return null;
+}
+
+// Tool-call grouping for the flow canvas.
+//
+// Same-kind tool calls that started within GROUP_GAP_MS of the previous
+// call's end collapse into a single group node when the run length is at
+// or above `threshold`. Anything below threshold stays as individual call
+// entries. Output is the layout pass's input list: each entry is either
+// `{ type: 'group', ...stats }` or `{ type: 'call', call }`.
+
+export const GROUP_GAP_MS = 3000;
+
+export interface GroupableCall {
+  kind?: string;
+  startedAt?: number;
+  endedAt?: number | null;
+  status?: string;
+  [k: string]: unknown;
+}
+
+export type GroupedEntry =
+  | { type: 'call'; call: GroupableCall }
+  | {
+      type: 'group';
+      kind: string;
+      count: number;
+      startedAt: number;
+      endedAt: number | null;
+      totalMs: number;
+      failedCount: number;
+      items: GroupableCall[];
+    };
+
+export function groupToolCalls(
+  sortedCalls: GroupableCall[],
+  threshold = 3,
+): GroupedEntry[] {
+  const minRun = Number.isFinite(threshold) && threshold >= 2 ? threshold : Infinity;
+  const out: GroupedEntry[] = [];
+  let i = 0;
+  while (i < sortedCalls.length) {
+    const start = sortedCalls[i];
+    if (!start) { i++; continue; }
+    const kind = start.kind || 'tool';
+    let j = i + 1;
+    while (j < sortedCalls.length) {
+      const prev = sortedCalls[j - 1];
+      const next = sortedCalls[j];
+      if (!prev || !next) break;
+      if ((next.kind || 'tool') !== kind) break;
+      const prevEnd = prev.endedAt || prev.startedAt || 0;
+      const nextStart = next.startedAt || 0;
+      if (nextStart - prevEnd > GROUP_GAP_MS) break;
+      j++;
+    }
+    const runLen = j - i;
+    if (runLen >= minRun) {
+      const items = sortedCalls.slice(i, j);
+      const totalMs = items.reduce((acc, c) => {
+        const e = c.endedAt || (c.startedAt ? Date.now() : 0);
+        const s = c.startedAt || 0;
+        return acc + Math.max(0, e - s);
+      }, 0);
+      const failedCount = items.filter((c) =>
+        String(c.status || '').toLowerCase() === 'failed',
+      ).length;
+      const first = items[0];
+      const last = items[items.length - 1];
+      out.push({
+        type: 'group',
+        kind,
+        count: runLen,
+        startedAt: (first && first.startedAt) || 0,
+        endedAt: (last && last.endedAt) || null,
+        totalMs,
+        failedCount,
+        items,
+      });
+    } else {
+      for (let k = i; k < j; k++) {
+        const c = sortedCalls[k];
+        if (c) out.push({ type: 'call', call: c });
+      }
+    }
+    i = j;
+  }
+  return out;
+}

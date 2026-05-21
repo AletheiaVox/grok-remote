@@ -15,6 +15,14 @@ import {
   formatTokens,
   fmtDuration,
   truncCmd,
+  NODE_HEIGHTS,
+  NODE_WIDTHS,
+  nodeKind,
+  nodeWidth,
+  SUBAGENT_ID_RE,
+  extractSubagentId,
+  GROUP_GAP_MS,
+  groupToolCalls,
 } from '../src/views/system/flow-helpers.js';
 
 test('SUB_AGENT_KIND_RE matches "Agent" and "Agent(...)" variants', () => {
@@ -314,4 +322,162 @@ test('truncCmd returns "(no command)" for empty input', () => {
   assert.equal(truncCmd('   '),     '(no command)');
   assert.equal(truncCmd(null),      '(no command)');
   assert.equal(truncCmd(undefined), '(no command)');
+});
+
+test('NODE_HEIGHTS and NODE_WIDTHS share the same key set', () => {
+  // Both registries must list every node type; an out-of-sync update would
+  // make dagre layout silently fall back to "tool" for one or the other.
+  assert.deepEqual(Object.keys(NODE_HEIGHTS).sort(), Object.keys(NODE_WIDTHS).sort());
+});
+
+test('nodeKind returns closed/open height for a known type', () => {
+  assert.equal(nodeKind('tool', false), 42);
+  assert.equal(nodeKind('tool', true),  280);
+  assert.equal(nodeKind('agent', false), 135);
+  assert.equal(nodeKind('agent', true),  135);
+});
+
+test('nodeKind falls back to tool dimensions for unknown types', () => {
+  assert.equal(nodeKind('mystery', false), NODE_HEIGHTS.tool!.closed);
+  assert.equal(nodeKind('mystery', true),  NODE_HEIGHTS.tool!.open);
+});
+
+test('nodeWidth returns closed/open width for a known type', () => {
+  assert.equal(nodeWidth('tool', false), 180);
+  assert.equal(nodeWidth('tool', true),  340);
+  assert.equal(nodeWidth('milestone', false), 200);
+});
+
+test('nodeWidth falls back to tool dimensions for unknown types', () => {
+  assert.equal(nodeWidth('mystery', false), NODE_WIDTHS.tool!.closed);
+});
+
+test('SUBAGENT_ID_RE matches the canonical subagent_id: <uuid> form', () => {
+  const m = 'subagent_id: 12345678-1234-1234-1234-123456789abc'.match(SUBAGENT_ID_RE);
+  assert.ok(m);
+  assert.equal(m![1], '12345678-1234-1234-1234-123456789abc');
+});
+
+test('extractSubagentId reads rawOutput.subagent_id directly', () => {
+  assert.equal(
+    extractSubagentId({ rawOutput: { subagent_id: '11111111-2222-3333-4444-555555555555' } }),
+    '11111111-2222-3333-4444-555555555555',
+  );
+});
+
+test('extractSubagentId scans rawOutput.text for "subagent_id: <uuid>"', () => {
+  // bg=true spawn ack puts the id in plain text, not a structured field.
+  assert.equal(
+    extractSubagentId({
+      rawOutput: {
+        text: 'spawned subagent_id: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee in background',
+      },
+    }),
+    'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+  );
+});
+
+test('extractSubagentId scans through response blocks', () => {
+  assert.equal(
+    extractSubagentId({
+      response: [
+        { text: 'preamble' },
+        { text: 'now subagent_id: 87654321-4321-4321-4321-cba987654321 done' },
+      ],
+    }),
+    '87654321-4321-4321-4321-cba987654321',
+  );
+});
+
+test('extractSubagentId returns null when nothing matches', () => {
+  assert.equal(extractSubagentId(null), null);
+  assert.equal(extractSubagentId({}), null);
+  assert.equal(extractSubagentId({ rawOutput: { text: 'no id here' } }), null);
+  assert.equal(extractSubagentId({ response: [{ text: 'nope' }] }), null);
+});
+
+test('GROUP_GAP_MS is 3 seconds (the layout assumes this)', () => {
+  assert.equal(GROUP_GAP_MS, 3000);
+});
+
+test('groupToolCalls leaves a short run as individual call entries', () => {
+  const calls = [
+    { kind: 'Read', startedAt: 1000, endedAt: 1100 },
+    { kind: 'Read', startedAt: 1200, endedAt: 1300 },
+  ];
+  const out = groupToolCalls(calls, 3);
+  assert.equal(out.length, 2);
+  assert.equal(out[0]!.type, 'call');
+  assert.equal(out[1]!.type, 'call');
+});
+
+test('groupToolCalls collapses a run of >= threshold same-kind calls', () => {
+  const calls = [
+    { kind: 'Read', startedAt: 1000, endedAt: 1100, status: 'completed' },
+    { kind: 'Read', startedAt: 1200, endedAt: 1300, status: 'completed' },
+    { kind: 'Read', startedAt: 1400, endedAt: 1500, status: 'failed' },
+  ];
+  const out = groupToolCalls(calls, 3);
+  assert.equal(out.length, 1);
+  const e = out[0];
+  assert.ok(e && e.type === 'group');
+  if (e && e.type === 'group') {
+    assert.equal(e.kind, 'Read');
+    assert.equal(e.count, 3);
+    assert.equal(e.failedCount, 1);
+    assert.equal(e.startedAt, 1000);
+    assert.equal(e.endedAt,   1500);
+    // totalMs sums each call's elapsed time
+    assert.equal(e.totalMs, 100 + 100 + 100);
+  }
+});
+
+test('groupToolCalls breaks the run on a kind change', () => {
+  const calls = [
+    { kind: 'Read', startedAt: 1000, endedAt: 1100 },
+    { kind: 'Read', startedAt: 1200, endedAt: 1300 },
+    { kind: 'Read', startedAt: 1400, endedAt: 1500 },
+    { kind: 'Bash', startedAt: 1600, endedAt: 1700 },
+  ];
+  const out = groupToolCalls(calls, 3);
+  // The Read run groups; the Bash call stays solo.
+  assert.equal(out.length, 2);
+  assert.equal(out[0]!.type, 'group');
+  assert.equal(out[1]!.type, 'call');
+});
+
+test('groupToolCalls breaks the run when the gap exceeds GROUP_GAP_MS', () => {
+  const calls = [
+    { kind: 'Read', startedAt: 1000, endedAt: 1100 },
+    { kind: 'Read', startedAt: 1200, endedAt: 1300 },
+    // Gap = 5_000 ms between endedAt and next startedAt — exceeds 3s.
+    { kind: 'Read', startedAt: 6300, endedAt: 6400 },
+  ];
+  const out = groupToolCalls(calls, 3);
+  // No run reaches threshold once the gap splits them.
+  assert.equal(out.length, 3);
+  for (const e of out) assert.equal(e.type, 'call');
+});
+
+test('groupToolCalls with threshold Infinity disables grouping', () => {
+  const calls = [
+    { kind: 'Read', startedAt: 1000, endedAt: 1100 },
+    { kind: 'Read', startedAt: 1200, endedAt: 1300 },
+    { kind: 'Read', startedAt: 1400, endedAt: 1500 },
+    { kind: 'Read', startedAt: 1600, endedAt: 1700 },
+  ];
+  const out = groupToolCalls(calls, Infinity);
+  assert.equal(out.length, 4);
+  for (const e of out) assert.equal(e.type, 'call');
+});
+
+test('groupToolCalls treats threshold < 2 as Infinity (no grouping)', () => {
+  const calls = [
+    { kind: 'Read', startedAt: 1000, endedAt: 1100 },
+    { kind: 'Read', startedAt: 1200, endedAt: 1300 },
+  ];
+  // Threshold 1 would otherwise produce a "group" of one — defended against.
+  const out = groupToolCalls(calls, 1);
+  assert.equal(out.length, 2);
+  for (const e of out) assert.equal(e.type, 'call');
 });

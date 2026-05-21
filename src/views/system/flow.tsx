@@ -56,6 +56,14 @@ import {
   formatTokens,
   fmtDuration,
   truncCmd,
+  NODE_HEIGHTS,
+  NODE_WIDTHS,
+  nodeKind,
+  nodeWidth,
+  SUBAGENT_ID_RE,
+  extractSubagentId,
+  GROUP_GAP_MS,
+  groupToolCalls,
 } from './flow-helpers.js';
 
 // How often we re-poll the agent list. SSE keeps individual cards live; this
@@ -67,9 +75,8 @@ const LIST_POLL_MS = 5000;
 const BG_TERMINALS_POLL_MS = 2000;
 // Cap milestones we keep around. Older ones rotate out of the strip.
 const MILESTONE_CAP = 40;
-// Group same-kind tool calls that started within this many ms of the
-// previous call's end (or start, if it has no end yet).
-const GROUP_GAP_MS = 3000;
+// GROUP_GAP_MS moved to ./flow-helpers.ts (imported above).
+void GROUP_GAP_MS;
 
 // isSubAgentCall, pickSubAgentLabel, and SUB_AGENT_KIND_RE moved to
 // ./flow-helpers.ts so they're typed + unit-testable. Imported above.
@@ -83,28 +90,7 @@ void SUB_AGENT_KIND_RE;
 //      run_in_background=true spawns (they don't get a SubagentCompleted).
 // The caller is expected to cache the result on the sub record so this
 // only runs once per sub.
-const SUBAGENT_ID_RE = /subagent_id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
-function extractSubagentId(sub) {
-  if (!sub) return null;
-  const ro = sub.rawOutput;
-  if (ro && typeof ro === 'object' && typeof ro.subagent_id === 'string' && ro.subagent_id) {
-    return ro.subagent_id;
-  }
-  // bg=true spawn ack: text body lives in either rawOutput.text or the
-  // streamed response content blocks.
-  if (ro && typeof ro === 'object' && typeof ro.text === 'string') {
-    const m = ro.text.match(SUBAGENT_ID_RE);
-    if (m) return m[1];
-  }
-  if (Array.isArray(sub.response)) {
-    for (const block of sub.response) {
-      const t = block && typeof block.text === 'string' ? block.text : '';
-      const m = t.match(SUBAGENT_ID_RE);
-      if (m) return m[1];
-    }
-  }
-  return null;
-}
+// SUBAGENT_ID_RE + extractSubagentId moved to ./flow-helpers.ts
 
 // Walk a sub-agent's trace `updates.jsonl` rows and return a flat list of
 // child tool-call entries. Mirrors the live applyAgentEventToState reducer
@@ -179,26 +165,7 @@ function extractChildCallsFromTrace(traceData) {
 // Per-node-type closed and (worst-case) open pixel heights. These mirror the
 // rendered card geometry in style.css. Open heights are conservative ceilings
 // so the dagre layout never under-reserves space.
-const NODE_HEIGHTS = {
-  agent:      { closed: 135, open: 135 },     // no expand
-  tool:       { closed: 42,  open: 280 },     // closed pill, open body with input/output
-  group:      { closed: 56,  open: 56 },      // group head; child rows are tallied separately
-  subAgent:   { closed: 138, open: 340 },     // crumb + head + row + snippet; expanded shows prompt/response/stats
-  bgTask:     { closed: 78,  open: 78 },      // bg cards never expand right now
-  milestone:  { closed: 50,  open: 50 },      // tiny pill
-};
-
-// Per-node-type rendered widths (also mirrored from style.css). Tool and
-// sub-agent cards widen when expanded; everything else is fixed width. dagre
-// needs the rendered width to space sibling ranks correctly.
-const NODE_WIDTHS = {
-  agent:      { closed: 220, open: 220 },
-  tool:       { closed: 180, open: 340 },
-  group:      { closed: 180, open: 180 },
-  subAgent:   { closed: 180, open: 280 },
-  bgTask:     { closed: 220, open: 220 },
-  milestone:  { closed: 200, open: 200 },
-};
+// NODE_HEIGHTS + NODE_WIDTHS moved to ./flow-helpers.ts
 // Per-grouped-tool-child row height when a group is expanded (each child
 // stacks below its parent group node).
 const GROUP_CHILD_ROW = 42;
@@ -284,15 +251,7 @@ function clearFlowSettings() {
 const SUB_CHILD_RETRY_DELAYS_MS = [2000, 4000, 8000, 16000, 32000];
 const SUB_CHILD_LIVE_RETRY_MS   = 5000;
 
-function nodeKind(typeName, isOpen) {
-  const h = NODE_HEIGHTS[typeName] || NODE_HEIGHTS.tool;
-  return isOpen ? h.open : h.closed;
-}
-
-function nodeWidth(typeName, isOpen) {
-  const w = NODE_WIDTHS[typeName] || NODE_WIDTHS.tool;
-  return isOpen ? w.open : w.closed;
-}
+// nodeKind + nodeWidth moved to ./flow-helpers.ts
 
 const STATUS_RANK = {
   running: 0, idle: 1, errored: 2, disconnected: 3, exited: 3, killed: 3, unknown: 4,
@@ -670,55 +629,7 @@ function layoutAgents(agents) {
   }));
 }
 
-// Walk tool calls in chronological order and fold adjacent same-kind
-// runs into groups. A run is two-or-more consecutive calls of identical
-// `kind` where the gap between (prev.endedAt || prev.startedAt) and
-// next.startedAt is under GROUP_GAP_MS. Single calls stay as individual
-// tool entries. `threshold` is the minimum runLen to fold into a group
-// (default 3). Pass Infinity to disable grouping entirely.
-function groupToolCalls(sortedCalls, threshold = 3) {
-  const minRun = Number.isFinite(threshold) && threshold >= 2 ? threshold : Infinity;
-  const out = [];
-  let i = 0;
-  while (i < sortedCalls.length) {
-    const start = sortedCalls[i];
-    const kind = start.kind || 'tool';
-    let j = i + 1;
-    while (j < sortedCalls.length) {
-      const prev = sortedCalls[j - 1];
-      const next = sortedCalls[j];
-      if ((next.kind || 'tool') !== kind) break;
-      const prevEnd = prev.endedAt || prev.startedAt || 0;
-      const nextStart = next.startedAt || 0;
-      if (nextStart - prevEnd > GROUP_GAP_MS) break;
-      j++;
-    }
-    const runLen = j - i;
-    if (runLen >= minRun) {
-      const items = sortedCalls.slice(i, j);
-      const totalMs = items.reduce((acc, c) => {
-        const e = c.endedAt || (c.startedAt ? Date.now() : 0);
-        const s = c.startedAt || 0;
-        return acc + Math.max(0, e - s);
-      }, 0);
-      const failedCount = items.filter(c => String(c.status || '').toLowerCase() === 'failed').length;
-      out.push({
-        type: 'group',
-        kind,
-        count: runLen,
-        startedAt: items[0].startedAt || 0,
-        endedAt: items[items.length - 1].endedAt || null,
-        totalMs,
-        failedCount,
-        items,
-      });
-    } else {
-      for (let k = i; k < j; k++) out.push({ type: 'call', call: sortedCalls[k] });
-    }
-    i = j;
-  }
-  return out;
-}
+// groupToolCalls moved to ./flow-helpers.ts (imported above).
 
 // ── event dispatcher (pure) ───────────────────────────────────────────────
 //
