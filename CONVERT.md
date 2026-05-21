@@ -142,9 +142,9 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 |--------|-----------------------------------|--------------------------------------|
 | [x]    | src/lib/api.js                    | src/lib/api.ts                       |
 | [x]    | src/lib/version-footer.js         | src/lib/version-footer.ts            |
-| [ ]    | src/views/changelog-modal.js      | src/views/changelog-modal.ts         |
-| [ ]    | src/views/update-modal.js         | src/views/update-modal.ts            |
-| [ ]    | src/views/settings.js             | src/views/settings.ts                |
+| [x]    | src/views/changelog-modal.js      | src/views/changelog-modal.ts         |
+| [x]    | src/views/update-modal.js         | src/views/update-modal.ts            |
+| [x]    | src/views/settings.js             | src/views/settings.ts                |
 | [ ]    | src/views/files.js                | src/views/files.ts                   |
 | [ ]    | src/views/agents.js               | src/views/agents.ts                  |
 | [ ]    | src/views/trace.js                | src/views/trace.ts                   |

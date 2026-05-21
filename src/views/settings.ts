@@ -1,68 +1,89 @@
 // Settings view.
-//
-// Two-pane shell:
-//   - left: sub-nav grouped by section (general, native config, tools)
-//   - right: active sub-page content
-//
-// The "general" sub-page is the original settings form (default model,
-// default cwd, auto-approve, debug, retention, theme). Every other
-// sub-page is one of the system page modules (plugins, hooks,
-// marketplaces, etc.), mounted into the content host via its existing
-// mount(container) / unmount() API. SettingsView never knows what's
-// inside those pages.
 
-import { api } from '../lib/api';
+import { api } from '../lib/api.js';
 import { el } from '../lib/render.js';
-import { iconHtml } from '../lib/icons';
-import { THEMES, getTheme, setTheme } from '../lib/themes';
+import { iconHtml } from '../lib/icons.js';
+import { THEMES, getTheme, setTheme } from '../lib/themes.js';
 import { SETTINGS_SECTIONS, getSettingsPage } from './system/index.js';
 
-function clampInt(raw, min, max, fallback) {
+function clampInt(raw: unknown, min: number, max: number, fallback: number): number {
   const n = parseInt(String(raw).trim(), 10);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
 }
 
+interface SettingsSnapshot {
+  defaultModel?: string | null;
+  defaultCwd?: string | null;
+  autoApprove?: boolean;
+  debug?: boolean;
+  retentionDays?: number;
+  theme?: string;
+}
+
+interface PageModule {
+  mount?(parent: HTMLElement, ctx?: unknown): void;
+  unmount?(): void;
+}
+
 export class SettingsView {
+  settings: SettingsSnapshot;
+  models: unknown[];
+
+  private _activeArea: string;
+  private _mountedModule: PageModule | null;
+  private _navButtons: Map<string, HTMLElement>;
+
+  generalForm: HTMLElement;
+  contentHost: HTMLElement;
+  subnav: HTMLElement;
+  root: HTMLElement;
+
+  modelInput!: HTMLInputElement;
+  modelSelect: HTMLSelectElement | null = null;
+  cwdInput!: HTMLInputElement;
+  autoApprove!: HTMLInputElement;
+  debugToggle!: HTMLInputElement;
+  retentionInput!: HTMLInputElement;
+  themePicker!: HTMLElement;
+  statusEl!: HTMLElement;
+  saveBtn!: HTMLButtonElement;
+  reloadBtn!: HTMLButtonElement;
+  modelFieldHost!: HTMLElement;
+  themeCards: Record<string, HTMLElement> = {};
+
   constructor() {
     this.settings = {};
     this.models   = [];
 
     this._activeArea     = 'general';
-    this._mountedModule  = null;       // the system-page module currently
-                                        // owning the content host, if any
-    this._navButtons     = new Map();  // area -> button (for active state)
+    this._mountedModule  = null;
+    this._navButtons     = new Map();
 
     this._buildGeneralFormPieces();
     this.generalForm = this._buildGeneralFormRoot();
 
-    this.contentHost = el('div', { class: 'settings-content' });
+    this.contentHost = el('div', { class: 'settings-content' }) as HTMLElement;
     this.subnav = this._buildSubnav();
 
     this.root = el('section', { class: 'settings-shell' },
       this.subnav,
       this.contentHost,
-    );
+    ) as HTMLElement;
   }
 
-  // ── public lifecycle (called by main.js router) ──────────────────────
-
-  mount(parent) {
+  mount(parent: HTMLElement): void {
     if (this.root.parentNode !== parent) {
       parent.appendChild(this.root);
     }
-    // mount() does not pick a sub-page on its own; the router calls
-    // setActive() right after to apply the route's sub.
   }
 
-  unmount() {
+  unmount(): void {
     this._teardownMountedModule();
     if (this.root.parentNode) this.root.parentNode.removeChild(this.root);
   }
 
-  // Switch the active sub-page. Cheap to call repeatedly with the same
-  // area: returns early.
-  setActive(area) {
+  setActive(area?: string): void {
     const next = area || 'general';
     if (next === this._activeArea && this.contentHost.children.length) return;
     this._activeArea = next;
@@ -70,10 +91,8 @@ export class SettingsView {
     this._renderActive();
   }
 
-  // ── sub-nav ──────────────────────────────────────────────────────────
-
-  _buildSubnav() {
-    const nav = el('nav', { class: 'settings-subnav', 'aria-label': 'settings sections' });
+  private _buildSubnav(): HTMLElement {
+    const nav = el('nav', { class: 'settings-subnav', 'aria-label': 'settings sections' }) as HTMLElement;
     for (const section of SETTINGS_SECTIONS) {
       nav.appendChild(el('div', { class: 'settings-subnav__section-title' }, section.title));
       const list = el('ul', { class: 'settings-subnav__list' });
@@ -85,7 +104,7 @@ export class SettingsView {
         },
           el('span', { class: 'settings-subnav__ico', innerHTML: iconHtml(item.iconName || 'settings') }),
           el('span', { class: 'settings-subnav__lbl' }, item.label),
-        );
+        ) as HTMLElement;
         this._navButtons.set(item.area, btn);
         list.appendChild(el('li', {}, btn));
       }
@@ -94,37 +113,36 @@ export class SettingsView {
     return nav;
   }
 
-  _refreshSubnavActive() {
+  private _refreshSubnavActive(): void {
     for (const [area, btn] of this._navButtons) {
       btn.classList.toggle('settings-subnav__item--active', area === this._activeArea);
     }
   }
 
-  // ── content rendering ────────────────────────────────────────────────
-
-  _renderActive() {
+  private _renderActive(): void {
     this._teardownMountedModule();
     this.contentHost.replaceChildren();
 
     if (this._activeArea === 'general') {
       this.contentHost.appendChild(this.generalForm);
       this.refreshThemePicker();
-      this.load();
+      void this.load();
       return;
     }
 
-    const page = getSettingsPage(this._activeArea);
-    if (!page || !page.module || typeof page.module.mount !== 'function') {
+    const page = getSettingsPage(this._activeArea) as (PageModule & { module?: PageModule }) | null;
+    const mod: PageModule | undefined = page && (page as { module?: PageModule }).module;
+    if (!page || !mod || typeof mod.mount !== 'function') {
       this.contentHost.appendChild(
         el('div', { class: 'pane-empty' }, `no view for "${this._activeArea}"`),
       );
       return;
     }
-    page.module.mount(this.contentHost, { area: this._activeArea });
-    this._mountedModule = page.module;
+    mod.mount(this.contentHost, { area: this._activeArea });
+    this._mountedModule = mod;
   }
 
-  _teardownMountedModule() {
+  private _teardownMountedModule(): void {
     if (!this._mountedModule) return;
     if (typeof this._mountedModule.unmount === 'function') {
       try { this._mountedModule.unmount(); } catch { /* ignore */ }
@@ -132,33 +150,31 @@ export class SettingsView {
     this._mountedModule = null;
   }
 
-  // ── general settings form (the legacy SettingsView content) ──────────
-
-  _buildGeneralFormPieces() {
-    this.modelInput   = el('input', { class: 'inp', type: 'text', placeholder: 'grok-build' });
+  private _buildGeneralFormPieces(): void {
+    this.modelInput   = el('input', { class: 'inp', type: 'text', placeholder: 'grok-build' }) as HTMLInputElement;
     this.modelSelect  = null;
-    this.cwdInput     = el('input', { class: 'inp', type: 'text', placeholder: '/path/to/working/dir' });
-    this.autoApprove  = el('input', { type: 'checkbox' });
-    this.debugToggle  = el('input', { type: 'checkbox' });
+    this.cwdInput     = el('input', { class: 'inp', type: 'text', placeholder: '/path/to/working/dir' }) as HTMLInputElement;
+    this.autoApprove  = el('input', { type: 'checkbox' }) as HTMLInputElement;
+    this.debugToggle  = el('input', { type: 'checkbox' }) as HTMLInputElement;
     this.retentionInput = el('input', {
       class: 'inp inp--num', type: 'number', min: '0', max: '3650', step: '1', placeholder: '30',
-    });
+    }) as HTMLInputElement;
     this.themePicker = this._buildThemePicker();
-    this.statusEl = el('div', { class: 'settings-status' });
+    this.statusEl = el('div', { class: 'settings-status' }) as HTMLElement;
 
     this.saveBtn = el('button', {
       class: 'btn btn--primary',
-      onclick: (ev) => { ev.preventDefault(); this.save(); },
-    }, 'save');
+      onclick: (ev: MouseEvent) => { ev.preventDefault(); void this.save(); },
+    }, 'save') as HTMLButtonElement;
     this.reloadBtn = el('button', {
       class: 'btn btn--ghost',
-      onclick: (ev) => { ev.preventDefault(); this.load(); },
-    }, 'reload');
+      onclick: (ev: MouseEvent) => { ev.preventDefault(); void this.load(); },
+    }, 'reload') as HTMLButtonElement;
 
-    this.modelFieldHost = el('div', { class: 'field-host' }, this.modelInput);
+    this.modelFieldHost = el('div', { class: 'field-host' }, this.modelInput) as HTMLElement;
   }
 
-  _buildGeneralFormRoot() {
+  private _buildGeneralFormRoot(): HTMLElement {
     return el('section', { class: 'settings' },
       el('h2', { class: 'settings-title' }, 'general'),
       this.statusEl,
@@ -181,27 +197,27 @@ export class SettingsView {
         'applies instantly. saved in this browser only.'),
 
       el('div', { class: 'settings-actions' }, this.saveBtn, this.reloadBtn),
-    );
+    ) as HTMLElement;
   }
 
-  field(label, control, help) {
+  field(label: string, control: HTMLElement, help?: string): HTMLElement {
     return el('div', { class: 'field' },
       el('label', { class: 'field-label' }, label),
       control,
       help ? el('div', { class: 'field-help' }, help) : null,
-    );
+    ) as HTMLElement;
   }
 
-  refreshThemePicker() {
+  refreshThemePicker(): void {
     const current = getTheme();
     for (const [k, card] of Object.entries(this.themeCards || {})) {
       card.classList.toggle('theme-card--selected', k === current);
-      const radio = card.querySelector('input[type="radio"]');
+      const radio = card.querySelector('input[type="radio"]') as HTMLInputElement | null;
       if (radio) radio.checked = (k === current);
     }
   }
 
-  async load() {
+  async load(): Promise<void> {
     this.setStatus('loading...', 'idle');
     try {
       const [settings, modelsResp] = await Promise.allSettled([
@@ -209,7 +225,7 @@ export class SettingsView {
         api.models(),
       ]);
       if (settings.status === 'fulfilled' && settings.value) {
-        this.settings = settings.value || {};
+        this.settings = (settings.value || {}) as SettingsSnapshot;
         this.modelInput.value  = this.settings.defaultModel || '';
         this.cwdInput.value    = this.settings.defaultCwd   || '';
         this.autoApprove.checked = !!this.settings.autoApprove;
@@ -220,29 +236,37 @@ export class SettingsView {
         this.setStatus('settings unreachable · using defaults', 'warn');
       }
 
-      let models = [];
+      let models: unknown[] = [];
       if (modelsResp.status === 'fulfilled' && modelsResp.value) {
-        const m = modelsResp.value;
+        const m = modelsResp.value as unknown;
         if (Array.isArray(m)) models = m;
-        else if (Array.isArray(m.models)) models = m.models;
+        else if (m && typeof m === 'object' && Array.isArray((m as { models?: unknown[] }).models)) {
+          models = (m as { models: unknown[] }).models;
+        }
       }
       this.models = models;
       this.swapModelField();
       if (settings.status === 'fulfilled') this.setStatus('loaded', 'ok');
     } catch (e) {
-      this.setStatus(`load failed: ${e.message}`, 'fail');
+      const msg = e instanceof Error ? e.message : String(e);
+      this.setStatus(`load failed: ${msg}`, 'fail');
     }
   }
 
-  swapModelField() {
+  swapModelField(): void {
     if (Array.isArray(this.models) && this.models.length) {
-      const sel = el('select', { class: 'inp' });
+      const sel = el('select', { class: 'inp' }) as HTMLSelectElement;
       const cur = this.modelInput.value || this.settings.defaultModel || '';
       sel.appendChild(el('option', { value: '' }, '(unset)'));
       for (const m of this.models) {
-        const id = typeof m === 'string' ? m : (m.id || m.name || m.modelId);
+        let id: string | undefined;
+        if (typeof m === 'string') id = m;
+        else if (m && typeof m === 'object') {
+          const r = m as { id?: string; name?: string; modelId?: string };
+          id = r.id || r.name || r.modelId;
+        }
         if (!id) continue;
-        const opt = el('option', { value: id }, id);
+        const opt = el('option', { value: id }, id) as HTMLOptionElement;
         if (id === cur) opt.selected = true;
         sel.appendChild(opt);
       }
@@ -257,7 +281,7 @@ export class SettingsView {
     }
   }
 
-  async save() {
+  async save(): Promise<void> {
     const body = {
       defaultModel: this.modelSelect && this.modelSelect.value
         ? this.modelSelect.value
@@ -272,28 +296,29 @@ export class SettingsView {
     this.setStatus('saving...', 'idle');
     try {
       const updated = await api.patchSettings(body);
-      this.settings = updated || body;
+      this.settings = (updated || body) as SettingsSnapshot;
       this.setStatus('saved', 'ok');
       window.dispatchEvent(new CustomEvent('grok-remote:settings-change', {
         detail: this.settings,
       }));
     } catch (e) {
-      this.setStatus(`save failed: ${e.message}`, 'fail');
+      const msg = e instanceof Error ? e.message : String(e);
+      this.setStatus(`save failed: ${msg}`, 'fail');
     } finally {
       this.saveBtn.disabled = false;
     }
   }
 
-  setStatus(text, kind) {
+  setStatus(text: string, kind?: 'ok' | 'fail' | 'warn' | 'idle'): void {
     this.statusEl.replaceChildren(
       el('span', { class: `status-pill status-pill--${kind || 'idle'}` }, '·'),
       el('span', { class: 'settings-status-text' }, text),
     );
   }
 
-  _buildThemePicker() {
+  private _buildThemePicker(): HTMLElement {
     const current = getTheme();
-    const grid = el('div', { class: 'theme-grid' });
+    const grid = el('div', { class: 'theme-grid' }) as HTMLElement;
     this.themeCards = {};
     for (const t of THEMES) {
       const isSel = t.name === current;
@@ -315,7 +340,7 @@ export class SettingsView {
         }),
         el('span', { class: 'theme-card-swatch', style: `background: ${t.accent}` }),
         el('span', { class: 'theme-card-label' }, t.label),
-      );
+      ) as HTMLElement;
       this.themeCards[t.name] = card;
       grid.appendChild(card);
     }

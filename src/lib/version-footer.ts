@@ -3,8 +3,8 @@
 import { el } from './render.js';
 import { iconHtml } from './icons.js';
 import { api } from './api.js';
-import { openUpdateModal } from '../views/update-modal.js';
-import { openChangelogModal } from '../views/changelog-modal.js';
+import { openUpdateModal } from '../views/update-modal';
+import { openChangelogModal } from '../views/changelog-modal';
 
 const POLL_MS = 10 * 60 * 1000;
 const LAST_SEEN_VERSION_KEY = 'grok-remote.update.lastSeenVersion';

@@ -1,14 +1,12 @@
-// Self-update modal: streams /api/version/update SSE events into a
-// per-step log, then polls /api/health after the restart step until the
-// new server comes back. On a successful sha change we reload the page.
-//
-// This file owns the modal lifecycle. Callers just call openUpdateModal({...}).
+// Self-update modal.
 
 import { el } from '../lib/render.js';
-import { iconHtml } from '../lib/icons';
-import { api } from '../lib/api';
+import { iconHtml as _iconHtml } from '../lib/icons.js';
+import { api } from '../lib/api.js';
 
-const STEP_LABELS = {
+void _iconHtml;
+
+const STEP_LABELS: Record<string, string> = {
   open:      'connecting',
   preflight: 'preflight',
   fetch:     'git fetch origin main',
@@ -19,12 +17,41 @@ const STEP_LABELS = {
   done:      'done',
 };
 
-const STEP_ORDER = ['preflight', 'fetch', 'pull', 'install', 'build', 'restart'];
+const STEP_ORDER = ['preflight', 'fetch', 'pull', 'install', 'build', 'restart'] as const;
 
-export function openUpdateModal({ current, latest } = {}) {
-  // Track the running sha BEFORE the update kicks off so we can compare
-  // after the server restarts and tell whether the new code actually
-  // booted.
+interface CurrentInfo {
+  gitSha?: string;
+  version?: string;
+}
+
+interface LatestInfo {
+  latestSha?: string;
+  latestVersion?: string;
+  behind?: number;
+}
+
+export interface UpdateModalOptions {
+  current?: CurrentInfo | null;
+  latest?:  LatestInfo  | null;
+}
+
+interface UpdateStepEvent {
+  step?: string;
+  status?: 'start' | 'log' | 'ok' | 'fail' | 'skip';
+  detail?: string;
+}
+
+interface StepRow {
+  node: HTMLElement;
+  start(text?: string): void;
+  appendLog(chunk?: string): void;
+  markOk(text?: string): void;
+  markFail(text?: string): void;
+  markSkip(text?: string): void;
+  markWaiting(text?: string): void;
+}
+
+export function openUpdateModal({ current, latest }: UpdateModalOptions = {}): { close: () => void } {
   const beforeSha = current && current.gitSha;
   const beforeVersion = current && current.version;
 
@@ -45,19 +72,19 @@ export function openUpdateModal({ current, latest } = {}) {
   }
 
   const stepsHost = el('div', { class: 'update-modal__steps' });
-  const stepRows = new Map();
+  const stepRows = new Map<string, StepRow>();
   for (const name of STEP_ORDER) {
-    stepRows.set(name, createStepRow(name));
-    stepsHost.appendChild(stepRows.get(name).node);
+    const row = createStepRow(name);
+    stepRows.set(name, row);
+    stepsHost.appendChild(row.node);
   }
 
-  // Footer: dismiss when finished, or live status while running.
-  const statusEl = el('div', { class: 'update-modal__status update-modal__status--running' }, 'connecting...');
+  const statusEl = el('div', { class: 'update-modal__status update-modal__status--running' }, 'connecting...') as HTMLElement;
   const dismissBtn = el('button', {
     type: 'button',
     class: 'btn update-modal__dismiss',
     onclick: () => close(),
-  }, 'close');
+  }, 'close') as HTMLButtonElement;
   dismissBtn.hidden = true;
   const footer = el('div', { class: 'update-modal__footer' }, statusEl, dismissBtn);
 
@@ -70,34 +97,32 @@ export function openUpdateModal({ current, latest } = {}) {
     stepsHost,
     footer,
   );
-  const backdrop = el('div', { class: 'update-modal' }, card);
+  const backdrop = el('div', { class: 'update-modal' }, card) as HTMLElement;
   document.body.appendChild(backdrop);
 
-  // Persist the pre-update version so the post-reload toast can tell what
-  // bumped. Cleared by the toast hook on next load.
   try {
     localStorage.setItem('grok-remote.update.beforeVersion', beforeVersion || '');
     localStorage.setItem('grok-remote.update.beforeSha', beforeSha || '');
   } catch { /* ignore */ }
 
   let aborted = false;
-  let healthTimer = null;
+  let healthTimer: ReturnType<typeof setTimeout> | null = null;
   let healthDeadline = 0;
   const abortCtl = new AbortController();
 
-  function close() {
+  function close(): void {
     aborted = true;
     try { abortCtl.abort(); } catch { /* ignore */ }
     if (healthTimer) { clearTimeout(healthTimer); healthTimer = null; }
     if (backdrop.isConnected) backdrop.remove();
   }
 
-  function setStatus(text, kind) {
+  function setStatus(text: string, kind?: 'running' | 'ok' | 'fail'): void {
     statusEl.textContent = text;
     statusEl.className = `update-modal__status update-modal__status--${kind || 'running'}`;
   }
 
-  function applyEvent(ev) {
+  function applyEvent(ev: UpdateStepEvent | null | undefined): void {
     const step = ev && ev.step;
     const status = ev && ev.status;
     if (!step) return;
@@ -106,32 +131,25 @@ export function openUpdateModal({ current, latest } = {}) {
       return;
     }
     if (step === 'done') {
-      // Final pseudo-step; rendered as overall status only.
       if (status === 'fail') {
-        setStatus(`update failed: ${ev.detail || 'unknown error'}`, 'fail');
+        setStatus(`update failed: ${ev?.detail || 'unknown error'}`, 'fail');
         dismissBtn.hidden = false;
       } else {
-        // The restart row may already be telling us "waiting for server"; the
-        // health poll will flip statuses when the new build comes back.
         setStatus('update applied; waiting for server', 'running');
       }
       return;
     }
     const row = stepRows.get(step);
     if (!row) return;
-    if (status === 'start') row.start(ev.detail);
-    else if (status === 'log') row.appendLog(ev.detail);
-    else if (status === 'ok') row.markOk(ev.detail);
-    else if (status === 'fail') row.markFail(ev.detail);
-    else if (status === 'skip') row.markSkip(ev.detail);
+    if (status === 'start') row.start(ev?.detail);
+    else if (status === 'log') row.appendLog(ev?.detail);
+    else if (status === 'ok') row.markOk(ev?.detail);
+    else if (status === 'fail') row.markFail(ev?.detail);
+    else if (status === 'skip') row.markSkip(ev?.detail);
   }
 
-  // ── Stream + parser ─────────────────────────────────────────────────
-  // We use fetch + ReadableStream because EventSource only does GET, and
-  // the endpoint is POST. The wire format is plain SSE; we parse it by
-  // hand. Each `event: update / data: <json>` pair becomes an applyEvent.
   (async () => {
-    let res;
+    let res: Response;
     try {
       res = await fetch(api.version.updateUrl(), {
         method: 'POST',
@@ -140,7 +158,8 @@ export function openUpdateModal({ current, latest } = {}) {
       });
     } catch (err) {
       if (aborted) return;
-      setStatus(`could not start update: ${err.message}`, 'fail');
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus(`could not start update: ${msg}`, 'fail');
       dismissBtn.hidden = false;
       return;
     }
@@ -160,18 +179,15 @@ export function openUpdateModal({ current, latest } = {}) {
     let buf = '';
     let restartStarted = false;
 
-    function processFrame(frame) {
-      // SSE frame: lines separated by \n, terminated by an empty line. We
-      // only care about `data:` lines. Multi-line data values are joined
-      // by newlines per spec.
-      let dataLines = [];
+    function processFrame(frame: string): void {
+      const dataLines: string[] = [];
       for (const ln of frame.split('\n')) {
         if (ln.startsWith('data: ')) dataLines.push(ln.slice(6));
         else if (ln.startsWith('data:')) dataLines.push(ln.slice(5));
       }
       if (!dataLines.length) return;
-      let payload;
-      try { payload = JSON.parse(dataLines.join('\n')); }
+      let payload: UpdateStepEvent;
+      try { payload = JSON.parse(dataLines.join('\n')) as UpdateStepEvent; }
       catch { return; }
       if (payload && payload.step === 'restart' && payload.status === 'start') {
         restartStarted = true;
@@ -180,16 +196,11 @@ export function openUpdateModal({ current, latest } = {}) {
     }
 
     try {
-      // Loop reading chunks. The body may end naturally (success) or be
-      // cut short by pm2 SIGTERMing the server during restart; both are
-      // expected. The catch below treats them the same.
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
-        // SSE frames are terminated by a blank line. Split on \n\n.
-        let idx;
+        let idx: number;
         while ((idx = buf.indexOf('\n\n')) >= 0) {
           const frame = buf.slice(0, idx);
           buf = buf.slice(idx + 2);
@@ -197,32 +208,28 @@ export function openUpdateModal({ current, latest } = {}) {
         }
       }
     } catch (err) {
-      // Connection died. If the restart step had already fired, this is
-      // the expected outcome; fall through to the health poll.
       if (!aborted && !restartStarted) {
-        setStatus(`stream interrupted: ${err.message}`, 'fail');
+        const msg = err instanceof Error ? err.message : String(err);
+        setStatus(`stream interrupted: ${msg}`, 'fail');
         dismissBtn.hidden = false;
         return;
       }
     }
     if (aborted) return;
     if (restartStarted) {
-      // Mark the restart row as waiting and start polling /api/health.
       const row = stepRows.get('restart');
       if (row) row.markWaiting('waiting for server to come back...');
       setStatus('waiting for server to come back...', 'running');
       startHealthPoll();
     } else {
-      // Stream ended without restart; the server may have logged an early
-      // failure. The "done" event sets the final status above.
       dismissBtn.hidden = false;
     }
   })();
 
-  function startHealthPoll() {
+  function startHealthPoll(): void {
     const TIMEOUT_MS = 30_000;
     healthDeadline = Date.now() + TIMEOUT_MS;
-    const tick = async () => {
+    const tick = async (): Promise<void> => {
       if (aborted) return;
       if (Date.now() > healthDeadline) {
         setStatus('server did not come back in 30s. check `pm2 logs grok-remote`.', 'fail');
@@ -238,9 +245,8 @@ export function openUpdateModal({ current, latest } = {}) {
       } catch { /* server still down */ }
       if (healthy) {
         try {
-          const v = await api.version.current();
+          const v = await api.version.current() as { gitSha?: string; version?: string };
           if (v && v.gitSha && beforeSha && v.gitSha !== beforeSha) {
-            // New code is up. Persist the new version for the toast on reload.
             try {
               localStorage.setItem('grok-remote.update.justUpdatedTo', v.version || '');
             } catch { /* ignore */ }
@@ -250,9 +256,7 @@ export function openUpdateModal({ current, latest } = {}) {
             setTimeout(() => location.reload(), 600);
             return;
           }
-          // Server is up but on the old sha. Keep polling: pm2 may still be
-          // in the middle of cycling.
-        } catch { /* ignore parse failures, keep polling */ }
+        } catch { /* keep polling */ }
       }
       healthTimer = setTimeout(tick, 1000);
     };
@@ -262,31 +266,31 @@ export function openUpdateModal({ current, latest } = {}) {
   return { close };
 }
 
-function shortSha(s) {
+function shortSha(s: string | null | undefined): string {
   return s ? String(s).slice(0, 7) : '?';
 }
 
-function createStepRow(name) {
+function createStepRow(name: string): StepRow {
   const dot = el('span', { class: 'update-step__dot update-step__dot--idle' });
   const label = el('span', { class: 'update-step__label' }, STEP_LABELS[name] || name);
-  const detail = el('span', { class: 'update-step__detail' });
+  const detail = el('span', { class: 'update-step__detail' }) as HTMLElement;
   const head = el('div', { class: 'update-step__head' }, dot, label, detail);
-  const log = el('pre', { class: 'update-step__log', hidden: true });
-  const node = el('div', { class: 'update-step update-step--idle' }, head, log);
+  const log = el('pre', { class: 'update-step__log', hidden: true }) as HTMLPreElement;
+  const node = el('div', { class: 'update-step update-step--idle' }, head, log) as HTMLElement;
 
   let buf = '';
 
-  function setState(state) {
+  function setState(state: string): void {
     node.className = `update-step update-step--${state}`;
-    dot.className  = `update-step__dot update-step__dot--${state}`;
+    (dot as HTMLElement).className  = `update-step__dot update-step__dot--${state}`;
   }
-  function ensureLogVisible() {
+  function ensureLogVisible(): void {
     if (log.hidden) log.hidden = false;
   }
 
   return {
     node,
-    start(text) {
+    start(text?: string): void {
       setState('running');
       detail.textContent = '';
       if (text) {
@@ -295,29 +299,28 @@ function createStepRow(name) {
         log.textContent = buf;
       }
     },
-    appendLog(chunk) {
+    appendLog(chunk?: string): void {
       if (!chunk) return;
       ensureLogVisible();
       buf += String(chunk);
-      // Trim the log buffer so a chatty npm install doesn't grow forever.
       if (buf.length > 64 * 1024) buf = buf.slice(buf.length - 64 * 1024);
       log.textContent = buf;
       log.scrollTop = log.scrollHeight;
     },
-    markOk(text) {
+    markOk(text?: string): void {
       setState('ok');
       if (text) detail.textContent = text;
     },
-    markFail(text) {
+    markFail(text?: string): void {
       setState('fail');
       ensureLogVisible();
       if (text) detail.textContent = text;
     },
-    markSkip(text) {
+    markSkip(text?: string): void {
       setState('skip');
       if (text) detail.textContent = text;
     },
-    markWaiting(text) {
+    markWaiting(text?: string): void {
       setState('waiting');
       if (text) detail.textContent = text;
     },

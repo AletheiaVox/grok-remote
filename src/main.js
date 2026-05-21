@@ -12,7 +12,7 @@ import Split from 'split.js';
 import { api } from './lib/api';
 import { AgentsSidebar } from './views/agents.js';
 import { ChatView } from './views/chat.js';
-import { SettingsView } from './views/settings.js';
+import { SettingsView } from './views/settings';
 import { el } from './lib/render.js';
 import { registerPwa } from './lib/pwa';
 import { applyTheme, getTheme, nextTheme, getThemeMeta } from './lib/themes';
