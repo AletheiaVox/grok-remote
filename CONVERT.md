@@ -229,12 +229,13 @@ logged-in `grok` CLI on the host.
 | [x]    | GET /api/hello                       | (test/integration/server-boot.test.ts) |
 | [x]    | GET /api/version/current             | (test/integration/server-boot.test.ts) |
 | [x]    | GET /api/unknown -> 404              | (test/integration/server-boot.test.ts) |
-| [ ]    | GET /api/version/latest              |
-| [ ]    | GET /api/version/releases            |
-| [ ]    | GET /api/agents                      |
-| [ ]    | GET /api/agents/stream (SSE smoke)   |
-| [ ]    | GET /api/settings, PATCH /api/settings |
-| [ ]    | GET /api/system/health               |
+| [ ]    | GET /api/version/latest              | (network-dependent; skipped)            |
+| [ ]    | GET /api/version/releases            | (network-dependent; skipped)            |
+| [x]    | GET /api/agents                      | (test/integration/endpoints.test.ts)    |
+| [x]    | GET /api/agents/stream (SSE smoke)   | (test/integration/endpoints.test.ts)    |
+| [x]    | GET /api/settings                    | (test/integration/endpoints.test.ts)    |
+| [x]    | PATCH /api/settings (no-op idempotency) | (test/integration/endpoints.test.ts) |
+| [x]    | GET /api/system/health               | (test/integration/endpoints.test.ts)    |
 
 ### Phase 10 — final sweep
 
