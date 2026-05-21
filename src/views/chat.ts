@@ -1,10 +1,4 @@
-// @ts-nocheck
 // Per-agent conversation pane with live SSE streaming.
-//
-// Ported verbatim from chat.js. Full strict typing of the SSE event reducers,
-// DOM mounting, and dynamic ACP payload narrowing is deferred to Phase 10.
-// The build (vite/esbuild) strips types so runtime behavior is identical to
-// the .js version.
 //
 // Rendering rules (from PROTOCOL.md, frontend section):
 //   per turn, in chronological order:
@@ -45,6 +39,112 @@ import { fmtTokens } from '../lib/format';
 import { playIntro } from '../lib/intro-animation';
 
 export class ChatView {
+  static _toolsToggleWired: any;
+  static _active: any;
+  _activeTodoCard!: any;
+  _autoScroll!: any;
+  _autoScrollTools!: any;
+  _bgListViewerEl!: any;
+  _bgTermsByCard!: any;
+  _bgTermsTimer!: any;
+  _bgTermViewerEl!: any;
+  _bgTermViewerTimer!: any;
+  _chatIntroAbort!: any;
+  _chatIntroEl!: any;
+  _chatSplit!: any;
+  _chatSplitBuild!: any;
+  _chatSplitCollapsed!: any;
+  _chatSplitLastSizes!: any;
+  _convoSkills!: any;
+  _detachAutoScroll!: any;
+  _detachPalette!: any;
+  _easedScrollPending!: any;
+  _easedScrollRaf!: any;
+  _easedScrollTarget!: any;
+  _easedToolsRaf!: any;
+  _easedToolsTarget!: any;
+  _historyAll!: any;
+  _inFlightMap!: any;
+  _inFlightTimer!: any;
+  _isReplaying!: any;
+  _jumpToLatestBtn!: any;
+  _knownSkills!: any;
+  _lastEasedToolsWrite!: any;
+  _lastEasedWrite!: any;
+  _lastEventTs!: any;
+  _lastPayload!: any;
+  _lastRenderedTokens!: any;
+  _lastServerEcho!: any;
+  _modelDatalist!: any;
+  _modelSuggestions!: any;
+  _onAgentsRefresh!: any;
+  _onSettingsChange!: any;
+  _onVisibility!: any;
+  _payloadModal!: any;
+  _pendingTodoSeed!: any;
+  _promptCapImage!: any;
+  _scrollRaf!: any;
+  _sdDirty!: any;
+  _sdDirtyNotice!: any;
+  _sdFields!: any;
+  _sdNameInput!: any;
+  _sdNotice!: any;
+  _skillCommands!: any;
+  _skillsPromise!: any;
+  _splitFullscreenBtn!: any;
+  _splitToggleBtn!: any;
+  _toolsColFullscreen!: any;
+  _toolsColTab!: any;
+  _toolsFilesMounted!: any;
+  _toolsTabBtns!: any;
+  activeTurn!: any;
+  agentId!: any;
+  availableCommands!: any;
+  bgTermsStripEl!: any;
+  chatSplitEl!: any;
+  composerAttachBtn!: any;
+  composerCancel!: any;
+  composerDebugBtn!: any;
+  composerEl!: any;
+  composerFileInput!: any;
+  composerHint!: any;
+  composerSend!: any;
+  composerTa!: any;
+  connectBtn!: any;
+  convoSkillsStripEl!: any;
+  copyConvoBtn!: any;
+  currentAgent!: any;
+  empty!: any;
+  filesMounted!: any;
+  filesPane!: any;
+  flowMounted!: any;
+  flowPane!: any;
+  imageAttach!: any;
+  inflightPill!: any;
+  inFlightStripEl!: any;
+  infoPane!: any;
+  latestTotalTokens!: any;
+  palette!: any;
+  root!: any;
+  settingsBtn!: any;
+  settingsDrawer!: any;
+  settingsDrawerOpen!: any;
+  starBtn!: any;
+  statusEl!: any;
+  stream!: any;
+  streamEl!: any;
+  tabBtns!: any;
+  tabsEl!: any;
+  tabsState!: any;
+  toastHost!: any;
+  tokensPill!: any;
+  toolsColEl!: any;
+  toolsFilesPaneEl!: any;
+  toolsStreamEl!: any;
+  traceMounted!: any;
+  tracePane!: any;
+  turns!: any;
+
   constructor() {
     this.agentId = null;
     this.stream  = null;
@@ -184,27 +284,27 @@ export class ChatView {
     // Sidebar pushes fresh agent records into the chat view on each poll
     // tick. Pick out the one matching our active agent so the chat header,
     // info tab, and connect/disconnect button reflect live state.
-    this._onAgentsRefresh = (ev) => {
+    this._onAgentsRefresh = (ev: any) => {
       if (!this.agentId) return;
       const list = (ev && ev.detail) || [];
-      const a = list.find(x => x && x.id === this.agentId);
+      const a = list.find((x: any) => x && x.id === this.agentId);
       if (a) this.applyAgentRefresh(a);
     };
     document.addEventListener('grok-remote:agents-refresh', this._onAgentsRefresh);
 
     // Settings changes (e.g. debug toggle) come in via this custom event.
-    this._onSettingsChange = (ev) => this.applySettings((ev && ev.detail) || {});
+    this._onSettingsChange = (ev: any) => this.applySettings((ev && ev.detail) || {});
     window.addEventListener('grok-remote:settings-change', this._onSettingsChange);
     // Pull initial settings so the debug button surfaces if already enabled.
     api.getSettings().then((s) => this.applySettings(s || {})).catch(() => {});
   }
 
-  applySettings(s) {
+  applySettings(s: any) {
     const debug = !!s.debug;
     if (this.composerDebugBtn) this.composerDebugBtn.hidden = !debug;
   }
 
-  mount(parent) {
+  mount(parent: any) {
     parent.appendChild(this.root);
     // Split.js needs the panes to actually be in the DOM to read sizes,
     // so we init the inner chat split here, not in the constructor.
@@ -264,7 +364,7 @@ export class ChatView {
   }
 
   buildTabs() {
-    const make = (key, label) => el('button', {
+    const make = (key: any, label: any) => el('button', {
       class: `tab${this.tabsState === key ? ' tab--active' : ''}`,
       dataset: { key },
       onclick: () => this.switchTab(key),
@@ -375,7 +475,7 @@ export class ChatView {
     try {
       const updated = await api.updateAgent(this.agentId, { starred: !cur });
       this.applyAgentRefresh(updated);
-    } catch (e) {
+    } catch (e: any) {
       this.showToast(`star failed: ${e.message}`, 'warn');
     } finally {
       this.starBtn.disabled = false;
@@ -406,7 +506,7 @@ export class ChatView {
         await api.disconnect(this.agentId);
         this.showToast('disconnected; sending a message will reconnect.', 'info');
       }
-    } catch (e) {
+    } catch (e: any) {
       this.showToast(`${disconnected ? 'connect' : 'disconnect'} failed: ${e.message}`, 'warn');
     } finally {
       this.connectBtn.disabled = false;
@@ -418,7 +518,7 @@ export class ChatView {
     }
   }
 
-  applyAgentRefresh(a) {
+  applyAgentRefresh(a: any) {
     if (!a || a.id !== this.agentId) return;
     this.currentAgent = a;
     this._syncConnectBtn();
@@ -457,7 +557,7 @@ export class ChatView {
     }
   }
 
-  flashBtnLabel(btn, tempLabel) {
+  flashBtnLabel(btn: any, tempLabel: any) {
     if (!btn) return;
     const orig = btn.textContent;
     btn.textContent = tempLabel;
@@ -468,10 +568,10 @@ export class ChatView {
     }, 1200);
   }
 
-  switchTab(key) {
+  switchTab(key: any) {
     this.tabsState = key;
     for (const [k, btn] of Object.entries(this.tabBtns)) {
-      btn.classList.toggle('tab--active', k === key);
+      (btn as any).classList.toggle('tab--active', k === key);
     }
     const convo = this.root.querySelector('.pane--conversation');
     if (convo) convo.classList.toggle('hidden', key !== 'conversation');
@@ -554,7 +654,7 @@ export class ChatView {
       class: 'composer-input',
       rows: '3',
       placeholder: 'message the agent.  enter to send, shift+enter for newline.  type / for commands.',
-      onkeydown: (ev) => {
+      onkeydown: (ev: any) => {
         if (ev.key === 'Enter' && !ev.shiftKey) {
           ev.preventDefault();
           this.send();
@@ -581,14 +681,14 @@ export class ChatView {
     const attachBtn = el('button', {
       class: 'btn btn--ghost composer-attach',
       title: 'Attach image (saved to agent uploads/ folder)',
-      onclick: (ev) => { ev.preventDefault(); fileInput.click(); },
+      onclick: (ev: any) => { ev.preventDefault(); fileInput.click(); },
     }, 'attach image');
 
     const debugBtn = el('button', {
       class: 'btn btn--ghost composer-debug',
       type: 'button',
       title: 'Preview the exact JSON payload that will be sent (composer + attachments), plus the last server-composed prompt if one exists.',
-      onclick: (ev) => { ev.preventDefault(); this.openPayloadInspector(); },
+      onclick: (ev: any) => { ev.preventDefault(); this.openPayloadInspector(); },
     }, '{ payload }');
     // Hidden by default; surfaced when settings.debug is true.
     debugBtn.hidden = true;
@@ -671,7 +771,7 @@ export class ChatView {
     if (this._skillsPromise) return this._skillsPromise;
     this._skillsPromise = (async () => {
       try {
-        const data = await api.skills.list();
+        const data: any = await api.skills.list();
         const set = new Set();
         const palette = [];
         const seenNames = new Set();
@@ -704,7 +804,7 @@ export class ChatView {
   // Attach an "invoked skill" banner to the turn root when the user
   // message starts with /name and `name` matches a known skill. Banner
   // links to #/skills so the user can jump straight to the skill page.
-  _decorateSkill(turn) {
+  _decorateSkill(turn: any) {
     if (!turn || !turn.userText) return;
     const m = turn.userText.match(/^\s*\/([A-Za-z][\w-]*)\b/);
     if (!m) return;
@@ -734,7 +834,7 @@ export class ChatView {
 
   _renderConvoSkillsStrip() {
     if (!this.convoSkillsStripEl) return;
-    const entries = Array.from(this._convoSkills.entries());
+    const entries = Array.from(this._convoSkills.entries()) as any[];
     if (!entries.length) {
       this.convoSkillsStripEl.replaceChildren();
       this.convoSkillsStripEl.hidden = true;
@@ -756,7 +856,7 @@ export class ChatView {
     }
   }
 
-  _captureAgentCaps(agent) {
+  _captureAgentCaps(agent: any) {
     // Images are now always allowed: the backend saves attachments to the
     // agent's uploads/ folder, so any model can use them via its own tools.
     // We still track the model's native image capability for informational
@@ -773,7 +873,7 @@ export class ChatView {
     this.composerAttachBtn.classList.remove('is-disabled');
   }
 
-  setAvailableCommands(list) {
+  setAvailableCommands(list: any) {
     if (!Array.isArray(list)) return;
     this.availableCommands = list;
   }
@@ -796,14 +896,14 @@ export class ChatView {
     return out;
   }
 
-  _setComposerEnabled(enabled) {
+  _setComposerEnabled(enabled: any) {
     if (!this.composerTa) return;
     this.composerTa.disabled = !enabled;
     this.composerSend.disabled = !enabled;
     this.composerCancel.disabled = enabled; // only enable mid-turn... toggled in send()
   }
 
-  setAgent(agent) {
+  setAgent(agent: any) {
     // agent: { id, ... } or null
     this.closeStream();
     this._cancelChatIntro();
@@ -973,7 +1073,7 @@ export class ChatView {
     this._chatIntroEl = null;
   }
 
-  renderInfo(agent) {
+  renderInfo(agent: any) {
     if (!agent) {
       this.infoPane.replaceChildren(el('div', { class: 'pane-empty' }, 'no agent selected'));
       return;
@@ -982,7 +1082,7 @@ export class ChatView {
     const cwd       = agent.cwd       || '';
     const totalToks = this.latestTotalTokens != null ? this.latestTotalTokens : (agent.totalTokens != null ? agent.totalTokens : null);
 
-    const copyValueBtn = (val, label) => {
+    const copyValueBtn = (val: any, label: any) => {
       const btn = el('button', {
         class: 'info-copy',
         type: 'button',
@@ -1064,7 +1164,7 @@ export class ChatView {
   // Wraps `grok share <sessionId>` via POST /api/agents/:id/publish. The
   // button is disabled until the agent has a sessionId, mirroring the
   // resume block above. Result + warning text are rendered in-place.
-  _buildPublishSection(sessionId) {
+  _buildPublishSection(sessionId: any) {
     const wrap = el('div', { class: 'info-publish' });
     const head = el('div', { class: 'info-publish-head' },
       el('span', { class: 'info-publish-title' }, 'Publish (share)'),
@@ -1096,14 +1196,14 @@ export class ChatView {
     return wrap;
   }
 
-  async _handlePublish(btn, resultHost) {
+  async _handlePublish(btn: any, resultHost: any) {
     if (!this.agentId || !btn) return;
     btn.disabled = true;
     const orig = btn.textContent;
     btn.textContent = 'publishing...';
     resultHost.replaceChildren();
     try {
-      const data = await api.share(this.agentId);
+      const data: any = await api.share(this.agentId);
       const url = data && data.url;
       if (!url) throw new Error('server did not return a URL');
       const copyBtn = el('button', {
@@ -1125,7 +1225,7 @@ export class ChatView {
         rel: 'noopener noreferrer',
       }, url);
       resultHost.appendChild(el('div', { class: 'info-publish-result-row' }, link, copyBtn));
-    } catch (e) {
+    } catch (e: any) {
       resultHost.appendChild(el('div', { class: 'info-publish-error' },
         `publish failed: ${e && e.message ? e.message : String(e)}`));
     } finally {
@@ -1138,8 +1238,8 @@ export class ChatView {
     if (!this.agentId) return;
     this._historyAll = !!all;
     try {
-      const hist = await api.history(this.agentId, { turns, all });
-      const events = (hist && Array.isArray(hist.events)) ? hist.events : [];
+      const hist: any = await api.history(this.agentId, { turns, all });
+      const events: any[] = (hist && Array.isArray(hist.events)) ? hist.events : [];
       this.streamEl.replaceChildren();
       if (this.toolsStreamEl) this.toolsStreamEl.replaceChildren();
       this.turns = [];
@@ -1190,7 +1290,7 @@ export class ChatView {
     }
   }
 
-  _buildLoadEarlierBanner(missingCount) {
+  _buildLoadEarlierBanner(missingCount: any) {
     const btn = el('button', {
       class: 'history-load-more-btn',
       type: 'button',
@@ -1220,14 +1320,14 @@ export class ChatView {
     }
   }
 
-  showStatus(text, kind) {
+  showStatus(text: any, kind?: any) {
     this.statusEl.replaceChildren(
       el('span', { class: `status-pill status-pill--${kind || 'idle'}` }, '·'),
       el('span', { class: 'chat-status-text' }, text),
     );
   }
 
-  showToast(text, kind) {
+  showToast(text: any, kind?: any) {
     const toast = renderToast(text, kind);
     this.toastHost.appendChild(toast);
     setTimeout(() => {
@@ -1243,7 +1343,7 @@ export class ChatView {
     return this.startTurn('', { ts: this._lastEventTs || Date.now() });
   }
 
-  startTurn(userText, opts) {
+  startTurn(userText: any, opts?: any) {
     // A turn is about to land in the stream. Cancel the welcome animation
     // if it's still running so the figlet doesn't overlap the new bubble.
     this._cancelChatIntro();
@@ -1277,7 +1377,7 @@ export class ChatView {
     return turn;
   }
 
-  endTurn(meta) {
+  endTurn(meta: any) {
     if (!this.activeTurn) return;
     if (this.activeTurn.thinking) this.activeTurn.thinking.finalize();
     if (this.activeTurn.assistant) this.activeTurn.assistant.finalize();
@@ -1289,7 +1389,7 @@ export class ChatView {
     this.scrollToBottom();
   }
 
-  scrollToBottom(opts) {
+  scrollToBottom(opts?: any) {
     // Stay pinned to the bottom only when the user hasn't scrolled away.
     // Force-scroll on explicit actions (sending a message, initial load).
     const force = !!(opts && opts.force);
@@ -1390,7 +1490,7 @@ export class ChatView {
   // Eased follow for the tools column. Mirrors scrollToBottom() above but
   // for this.toolsStreamEl. Cheaper because the tools column doesn't use
   // content-visibility so scrollHeight is always accurate.
-  _scrollToolsToBottom(opts) {
+  _scrollToolsToBottom(opts?: any) {
     if (!this.toolsStreamEl) return;
     const force = !!(opts && opts.force);
     if (!force && this._autoScrollTools === false) return;
@@ -1434,7 +1534,7 @@ export class ChatView {
   // existing collapse toggle. The actual Split.js instance is created in
   // _initChatSplit() from mount(), after the elements are in the DOM.
   _buildToolsColHeader() {
-    const mkTab = (key, label, iconName) => el('button', {
+    const mkTab = (key: any, label: any, iconName: any) => el('button', {
       type: 'button',
       class: `chat-tools-tab${this._toolsColTab === key ? ' chat-tools-tab--active' : ''}`,
       'data-tab': key,
@@ -1495,7 +1595,7 @@ export class ChatView {
     catch { return false; }
   }
 
-  _setToolsColTab(key) {
+  _setToolsColTab(key: any) {
     if (key !== 'tools' && key !== 'files') return;
     if (this._toolsColTab === key) return;
     this._toolsColTab = key;
@@ -1523,7 +1623,7 @@ export class ChatView {
     const key = this._toolsColTab;
     if (this._toolsTabBtns) {
       for (const [k, btn] of Object.entries(this._toolsTabBtns)) {
-        btn.classList.toggle('chat-tools-tab--active', k === key);
+        (btn as any).classList.toggle('chat-tools-tab--active', k === key);
       }
     }
     if (this.toolsStreamEl)    this.toolsStreamEl.hidden    = key !== 'tools';
@@ -1595,9 +1695,9 @@ export class ChatView {
   }
   static get CHAT_SPLIT_MOBILE_MAX()    { return 720; }
 
-  _isValidSizesArray(a) {
+  _isValidSizesArray(a: any) {
     return Array.isArray(a) && a.length === 2 &&
-      a.every((n) => typeof n === 'number' && isFinite(n) && n >= 0 && n <= 100);
+      a.every((n: any) => typeof n === 'number' && isFinite(n) && n >= 0 && n <= 100);
   }
 
   _readAllChatSplitSizes() {
@@ -1622,14 +1722,14 @@ export class ChatView {
     return { ...defaults };
   }
 
-  _readChatSplitSizesForTab(tab) {
-    const all = this._readAllChatSplitSizes();
+  _readChatSplitSizesForTab(tab: any) {
+    const all: any = this._readAllChatSplitSizes();
     return (all[tab] || all.tools).slice();
   }
 
-  _writeChatSplitSizesForTab(tab, sizes) {
+  _writeChatSplitSizesForTab(tab: any, sizes: any) {
     if (!this._isValidSizesArray(sizes)) return;
-    const all = this._readAllChatSplitSizes();
+    const all: any = this._readAllChatSplitSizes();
     all[tab] = sizes;
     try { localStorage.setItem(ChatView.CHAT_SPLIT_SIZES_KEY, JSON.stringify(all)); }
     catch { /* ignore */ }
@@ -1656,7 +1756,7 @@ export class ChatView {
     // expand-after-collapse comes back to the right width for that tab.
     this._chatSplitLastSizes = this._readChatSplitSizesForTab(this._toolsColTab);
 
-    const buildSplit = (sizes) => {
+    const buildSplit = (sizes: any) => {
       this._chatSplit = Split([this.streamEl, this.toolsColEl], {
         sizes,
         minSize: [400, 240],
@@ -1729,7 +1829,7 @@ export class ChatView {
     this._updateToolsToggleLabel();
   }
 
-  _ensureToolsGroup(turn) {
+  _ensureToolsGroup(turn: any) {
     if (turn._toolsGroup) return turn._toolsGroup;
     const snippet = (turn.userText || '').trim();
     const short = snippet.length > 80 ? snippet.slice(0, 78) + '...' : snippet;
@@ -1858,7 +1958,7 @@ export class ChatView {
 
   // ── in-flight strip ──────────────────────────────────────────────────
 
-  _addInFlight(data, cardNode) {
+  _addInFlight(data: any, cardNode: any) {
     if (!data || !data.toolCallId) return;
     if (this._inFlightMap.has(data.toolCallId)) return;
     const label = (data.rawInput && (data.rawInput.command || data.rawInput.path || data.rawInput.file_path || data.rawInput.url))
@@ -1892,7 +1992,7 @@ export class ChatView {
     this._startInFlightTicker();
   }
 
-  _removeInFlight(toolCallId) {
+  _removeInFlight(toolCallId: any) {
     const entry = this._inFlightMap.get(toolCallId);
     if (!entry) return;
     entry.chip.remove();
@@ -1926,7 +2026,7 @@ export class ChatView {
       if (!this.agentId) return;
       if (document.hidden) return;
       try {
-        const res = await api.terminals.list(this.agentId);
+        const res: any = await api.terminals.list(this.agentId);
         const list = (res && Array.isArray(res.terminals)) ? res.terminals : [];
         this._renderBgTermsStrip(list);
       } catch { /* server may not implement the route yet */ }
@@ -1943,10 +2043,10 @@ export class ChatView {
     this._closeBgTermViewer();
   }
 
-  _renderBgTermsStrip(list) {
+  _renderBgTermsStrip(list: any) {
     // Active only by default. Exited entries hide; "view all (N)" link
     // opens the per-conversation viewer that shows the full list.
-    const running = (list || []).filter(t => !t.exited);
+    const running = (list || []).filter((t: any) => !t.exited);
     const exitedCount = (list || []).length - running.length;
     if (!running.length && !exitedCount) {
       this.bgTermsStripEl.replaceChildren();
@@ -2009,7 +2109,7 @@ export class ChatView {
 
   // Modal-style overlay listing every bg task (running + exited) for this
   // conversation. Read-only; clicking a row opens the live viewer.
-  _openBgListViewer(initial) {
+  _openBgListViewer(initial: any) {
     if (this._bgListViewerEl) { this._bgListViewerEl.remove(); this._bgListViewerEl = null; }
     const overlay = el('div', { class: 'bgterm-viewer bgterm-list-viewer' });
     const closeBtn = el('button', { type: 'button', class: 'bgterm-viewer__close',
@@ -2023,7 +2123,7 @@ export class ChatView {
     overlay.appendChild(body);
     document.body.appendChild(overlay);
     this._bgListViewerEl = overlay;
-    const render = (list) => {
+    const render = (list: any) => {
       body.replaceChildren();
       if (!list.length) {
         body.appendChild(el('div', { class: 'bgterm-list-viewer__empty' }, 'no bg shells.'));
@@ -2048,13 +2148,13 @@ export class ChatView {
     const timer = setInterval(async () => {
       if (!overlay.isConnected) { clearInterval(timer); return; }
       try {
-        const r = await api.terminals.list(this.agentId);
+        const r: any = await api.terminals.list(this.agentId);
         if (overlay.isConnected) render(r && r.terminals || []);
       } catch { /* ignore */ }
     }, 1500);
   }
 
-  async _openBgTermViewer(tid) {
+  async _openBgTermViewer(tid: any) {
     // Modal-style overlay with output buffer. Polls every 1s while open.
     this._closeBgTermViewer();
     const overlay = el('div', { class: 'bgterm-viewer' });
@@ -2077,7 +2177,7 @@ export class ChatView {
           killBtn.textContent = 'kill sent';
           status.textContent = 'killing (waiting for exit)';
           status.className = 'bgterm-viewer__status bgterm-viewer__status--killing';
-        } catch (err) {
+        } catch (err: any) {
           killBtn.disabled = false;
           killBtn.textContent = 'kill failed; retry';
           status.textContent = `kill failed: ${err.message}`;
@@ -2090,11 +2190,11 @@ export class ChatView {
     document.body.appendChild(overlay);
     this._bgTermViewerEl = overlay;
 
-    let openLink = null;
+    let openLink: any = null;
     const refresh = async () => {
       if (!this._bgTermViewerEl) return;
       try {
-        const r = await api.terminals.read(this.agentId, tid);
+        const r: any = await api.terminals.read(this.agentId, tid);
         if (!this._bgTermViewerEl) return;
         cmd.textContent = r.command || '';
         const code = r.exitStatus && (r.exitStatus.exitCode ?? r.exitStatus.signal);
@@ -2122,7 +2222,7 @@ export class ChatView {
               title: `open ${r.url}`,
             });
             openLink.innerHTML = `<span class="bgterm-viewer__open-ico">${iconHtml('globe')}</span><span class="bgterm-viewer__open-label">Open App</span>`;
-            status.parentNode.insertBefore(openLink, killBtn);
+            status.parentNode!.insertBefore(openLink, killBtn);
           }
           openLink.href = r.url;
           openLink.title = `open ${r.url}`;
@@ -2165,7 +2265,7 @@ export class ChatView {
 
   // ── event dispatch ──────────────────────────────────────────────────
 
-  handleEvent(name, payload, opts) {
+  handleEvent(name: any, payload: any, opts?: any) {
     const data = unwrap(payload);
     switch (name) {
       case 'user_message':              return this.onUserMessage(data, opts);
@@ -2185,7 +2285,7 @@ export class ChatView {
     }
   }
 
-  onUserMessage(data, opts) {
+  onUserMessage(data: any, opts?: any) {
     const text = (data && typeof data.text === 'string') ? data.text : extractText(data);
     const attachments = Array.isArray(data && data.attachments) ? data.attachments : [];
     if (!text && !attachments.length) return;
@@ -2208,7 +2308,7 @@ export class ChatView {
     });
   }
 
-  onMessageChunk(data, opts) {
+  onMessageChunk(data: any, opts?: any) {
     const text = extractText(data);
     if (text == null) return;
     const turn = this.ensureTurn();
@@ -2226,7 +2326,7 @@ export class ChatView {
     this.scrollToBottom();
   }
 
-  onThoughtChunk(data, opts) {
+  onThoughtChunk(data: any, opts?: any) {
     const text = extractText(data);
     if (text == null) return;
     const turn = this.ensureTurn();
@@ -2248,7 +2348,7 @@ export class ChatView {
   //     the reference so later merges can find it.
   //   - rawInput.merge === true and we have an active card → patch the
   //     existing card and stop. No new pill, no strip chip.
-  _maybeRouteTodoToolCall(data, opts) {
+  _maybeRouteTodoToolCall(data: any, opts?: any) {
     if (!isTodoWriteToolCall(data)) return false;
     const ri = data.rawInput || {};
     const isMerge = !!ri.merge;
@@ -2265,7 +2365,7 @@ export class ChatView {
     // in place so the user sees the checklist, not raw JSON.
     const turn = this.activeTurn || this.turns[this.turns.length - 1];
     if (turn && data.toolCallId) {
-      const entry = turn.tools.find((t) => t.id === data.toolCallId);
+      const entry = turn.tools.find((t: any) => t.id === data.toolCallId);
       if (entry && entry.card && !entry.card.isTodo) {
         const next = renderTodoWriteCard(data);
         if (entry.card.node && entry.card.node.parentNode) {
@@ -2295,7 +2395,7 @@ export class ChatView {
     return false;
   }
 
-  onToolCall(data, opts) {
+  onToolCall(data: any, opts?: any) {
     // TodoWrite tool calls coalesce into a single live-updating card
     // (see _maybeRouteTodoToolCall). Subsequent calls with merge=true
     // are absorbed by the previous card instead of producing siblings.
@@ -2321,12 +2421,12 @@ export class ChatView {
     this.scrollToBottom();
   }
 
-  onToolCallUpdate(data, opts) {
+  onToolCallUpdate(data: any, opts?: any) {
     if (this._maybeRouteTodoToolCall(data, opts)) return;
 
     const turn = this.activeTurn || this.turns[this.turns.length - 1];
     if (!turn) return;
-    let entry = turn.tools.find(t => t.id === data.toolCallId);
+    let entry = turn.tools.find((t: any) => t.id === data.toolCallId);
     if (entry) {
       entry.card.applyUpdate(data);
     } else {
@@ -2389,7 +2489,7 @@ export class ChatView {
     }
   }
 
-  onToolCallDelta(data) {
+  onToolCallDelta(data: any) {
     const turn = this.activeTurn || this.turns[this.turns.length - 1];
     if (!turn || !turn.tools.length) return;
     // append to most-recent open tool card
@@ -2400,19 +2500,19 @@ export class ChatView {
     }
     if (!target) target = turn.tools[turn.tools.length - 1];
     if (data && data.toolCallId) {
-      const exact = turn.tools.find(t => t.id === data.toolCallId);
+      const exact = turn.tools.find((t: any) => t.id === data.toolCallId);
       if (exact) target = exact;
     }
     target.card.appendDelta(data);
     this.scrollToBottom();
   }
 
-  onAvailableCommands(data) {
+  onAvailableCommands(data: any) {
     const list = (data && data.availableCommands) || data && data.commands || data;
     if (Array.isArray(list)) this.setAvailableCommands(list);
   }
 
-  onHandshake(data) {
+  onHandshake(data: any) {
     // Agent-manager forwards { meta, agentCapabilities } as the SSE payload.
     const caps = data && (data.agentCapabilities || data.agent_capabilities);
     const pc = caps && caps.promptCapabilities;
@@ -2431,14 +2531,14 @@ export class ChatView {
     }
   }
 
-  onSessionSummary(data) {
+  onSessionSummary(data: any) {
     const text = (data && (data.summary || data.text)) || '';
     const pill = renderCompactedPill(text);
     this.streamEl.appendChild(pill);
     this.scrollToBottom();
   }
 
-  onPromptComplete(data) {
+  onPromptComplete(data: any) {
     const meta = (data && data._meta) || data || {};
     if (meta && (meta.totalTokens != null || meta.total_tokens != null)) {
       this.latestTotalTokens = meta.totalTokens ?? meta.total_tokens;
@@ -2464,7 +2564,7 @@ export class ChatView {
     this.endTurn(meta);
   }
 
-  onAgentStatus(data) {
+  onAgentStatus(data: any) {
     const status = data && (data.status || data.state);
     if (!status) return;
     if (status === 'running') {
@@ -2482,12 +2582,12 @@ export class ChatView {
     }
   }
 
-  onSessionNotification(data) {
+  onSessionNotification(data: any) {
     const text = (data && (data.message || data.text)) || JSON.stringify(data).slice(0, 200);
     this.showToast(text, 'info');
   }
 
-  onError(data) {
+  onError(data: any) {
     const text = (data && (data.message || data.error)) || (typeof data === 'string' ? data : JSON.stringify(data));
     const turn = this.activeTurn || this.ensureTurn();
     turn.root.appendChild(renderErrorBanner(text));
@@ -2526,23 +2626,23 @@ export class ChatView {
       const resp = await api.prompt(this.agentId, { text, attachments });
       this._lastServerEcho = resp && typeof resp === 'object' ? resp : null;
       if (this.imageAttach) this.imageAttach.clear();
-    } catch (e) {
+    } catch (e: any) {
       this.activeTurn && this.activeTurn.root.appendChild(renderErrorBanner(e.message));
       this.endTurn(null);
     }
   }
 
-  _buildPayloadSnapshot(text, attachments) {
+  _buildPayloadSnapshot(text: any, attachments: any) {
     // Build the same body shape api.prompt would send, so the inspector
     // shows the exact wire payload (base64 included).
-    const safeAttachments = (attachments || []).map(a => ({
+    const safeAttachments = (attachments || []).map((a: any) => ({
       kind:       a.kind || 'image',
       name:       a.name || null,
       mimeType:   a.mimeType || null,
       size:       a.size || null,
       dataBase64: a.dataBase64 || '',
     }));
-    const body = { text };
+    const body: any = { text };
     if (safeAttachments.length) body.attachments = safeAttachments;
     return {
       method:  'POST',
@@ -2573,10 +2673,10 @@ export class ChatView {
       }
       document.removeEventListener('keydown', onKey);
     };
-    const onKey = (ev) => { if (ev.key === 'Escape') close(); };
+    const onKey = (ev: any) => { if (ev.key === 'Escape') close(); };
     document.addEventListener('keydown', onKey);
 
-    const dumpBlock = (title, value, opts = {}) => {
+    const dumpBlock = (title: any, value: any, opts: any = {}) => {
       const pretty = value == null ? 'null' : JSON.stringify(value, null, 2);
       const view = pretty.length > 20000 && !opts.full
         ? this._truncateBase64(pretty)
@@ -2589,7 +2689,7 @@ export class ChatView {
           try {
             await navigator.clipboard.writeText(pretty);
             this.showToast('payload copied', 'info');
-          } catch (e) {
+          } catch (e: any) {
             this.showToast(`copy failed: ${e.message}`, 'warn');
           }
         },
@@ -2650,10 +2750,10 @@ export class ChatView {
     document.body.appendChild(modal);
   }
 
-  _truncateBase64(pretty) {
+  _truncateBase64(pretty: any) {
     // Replace long dataBase64 strings inline with a "<NNN bytes>" placeholder
     // so the panel stays readable. The copy button still copies the original.
-    return pretty.replace(/"dataBase64": "([A-Za-z0-9+/=]{200,})"/g, (_m, b64) => {
+    return pretty.replace(/"dataBase64": "([A-Za-z0-9+/=]{200,})"/g, (_m: any, b64: any) => {
       return `"dataBase64": "<base64, ${b64.length} chars; copied in full when you click copy>"`;
     });
   }
@@ -2663,7 +2763,7 @@ export class ChatView {
     try {
       await api.cancel(this.agentId);
       this.showToast('cancel requested', 'warn');
-    } catch (e) {
+    } catch (e: any) {
       this.showToast(`cancel failed: ${e.message}`, 'warn');
     }
   }
@@ -2685,9 +2785,9 @@ export class ChatView {
     if (this._modelSuggestions == null) {
       this._modelSuggestions = [];
       api.systemModels.get()
-        .then((r) => {
+        .then((r: any) => {
           const items = (r && Array.isArray(r.items)) ? r.items : [];
-          this._modelSuggestions = items.map(i => i.id).filter(Boolean);
+          this._modelSuggestions = items.map((i: any) => i.id).filter(Boolean);
           this._renderModelDatalist();
         })
         .catch(() => { /* leave list empty */ });
@@ -2706,10 +2806,10 @@ export class ChatView {
     // Each field is built once, then stitched into grouped sections. We keep
     // the .value plumbing in a flat `fields` map so save-time collection is
     // just a dictionary walk.
-    const fields = {};
+    const fields: any = {};
 
     // ---- field factory --------------------------------------------------
-    const field = (key, labelText, input, hintText) => {
+    const field = (key: any, labelText: any, input: any, hintText?: any) => {
       if (key) fields[key] = input;
       return el('div', { class: 'sd-field' },
         el('label', { class: 'sd-label' }, labelText),
@@ -2717,7 +2817,7 @@ export class ChatView {
         hintText ? el('div', { class: 'sd-hint' }, hintText) : null,
       );
     };
-    const onDirty = (input) => {
+    const onDirty = (input: any) => {
       const evt = (input.tagName === 'SELECT' || input.type === 'checkbox') ? 'change' : 'input';
       input.addEventListener(evt, () => this._markSettingsDirty());
     };
@@ -2832,7 +2932,7 @@ export class ChatView {
     this._sdDirtyNotice = dirtyNotice;
 
     // ---- sections -------------------------------------------------------
-    const section = (title, ...children) => el('section', { class: 'sd-section' },
+    const section = (title: any, ...children: any[]) => el('section', { class: 'sd-section' },
       el('div', { class: 'sd-section-title' }, title),
       ...children,
     );
@@ -2938,7 +3038,7 @@ export class ChatView {
     }
   }
 
-  _populateSettingsDrawer(agent) {
+  _populateSettingsDrawer(agent: any) {
     if (!this._sdFields) return;
     const s = (agent && agent.settings) || {};
     const f = this._sdFields;
@@ -2978,7 +3078,7 @@ export class ChatView {
     if (this._sdDirtyNotice) this._sdDirtyNotice.classList.remove('hidden');
   }
 
-  _updateSettingsNotice(agent) {
+  _updateSettingsNotice(agent: any) {
     if (!this._sdNotice) return;
     const a = agent || this.currentAgent || {};
     const live = !!a.connected && a.status !== 'disconnected' && a.status !== 'exited';
@@ -2993,11 +3093,11 @@ export class ChatView {
 
   _collectSettings() {
     const f = this._sdFields;
-    const linesToArr = (s) => String(s || '')
+    const linesToArr = (s: any) => String(s || '')
       .split('\n')
-      .map(l => l.trim())
+      .map((l: any) => l.trim())
       .filter(Boolean);
-    const out = {
+    const out: any = {
       model:                f.model.value.trim(),
       reasoningEffort:      f.reasoningEffort.value.trim(),
       systemPromptOverride: f.systemPromptOverride.value,
@@ -3024,7 +3124,7 @@ export class ChatView {
   async _submitSettingsDrawer() {
     if (!this.agentId || !this._sdFields) return;
     const settings = this._collectSettings();
-    const patch = { settings };
+    const patch: any = { settings };
     if (this._sdNameInput) {
       const nv = this._sdNameInput.value.trim();
       const current = (this.currentAgent && this.currentAgent.name) || '';
@@ -3042,7 +3142,7 @@ export class ChatView {
       if (this._sdDirtyNotice) this._sdDirtyNotice.classList.add('hidden');
       this.showToast('conversation settings saved.', 'info');
       this.closeSettingsDrawer();
-    } catch (e) {
+    } catch (e: any) {
       this.showToast(`save failed: ${e && e.message ? e.message : String(e)}`, 'warn');
     } finally {
       if (saveBtn) {
@@ -3059,7 +3159,7 @@ export class ChatView {
       this.applyAgentRefresh(updated);
       this._populateSettingsDrawer(updated || {});
       this.showToast('per-conversation settings cleared.', 'info');
-    } catch (e) {
+    } catch (e: any) {
       this.showToast(`clear failed: ${e && e.message ? e.message : String(e)}`, 'warn');
     }
   }
