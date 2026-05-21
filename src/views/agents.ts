@@ -1,16 +1,10 @@
 // Agents sidebar: list + new + star + archive flow.
-// Owns the sidebar element only. The main pane is owned by chat.js / settings.js.
-//
-// Display order in active view:
-//   1. starred + active (alphabetical, but starred sort first)
-//   2. unstarred + active
-// Archived items live under a separate "archived" toggle section.
 
-import { api } from '../lib/api';
+import { api } from '../lib/api.js';
 import { el } from '../lib/render.js';
-import { fmtTokens } from '../lib/format';
+import { fmtTokens } from '../lib/format.js';
 
-const STATUS_LABEL = {
+const STATUS_LABEL: Record<string, string> = {
   idle:         'idle',
   running:      'running',
   errored:      'errored',
@@ -20,25 +14,77 @@ const STATUS_LABEL = {
   exited:       'disconnected',
 };
 
-// Persisted sort + search prefs (per browser).
 const SORT_KEY   = 'grok-remote.sidebar.sort';
 const SEARCH_KEY = 'grok-remote.sidebar.search';
 const SORT_DEFAULT = 'created_desc';
 
-const SORTS = {
+interface SortConfig { label: string; cmp(a: Agent, b: Agent): number }
+
+const SORTS: Record<string, SortConfig> = {
   created_desc:    { label: 'newest first',     cmp: (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') },
   created_asc:     { label: 'oldest first',     cmp: (a, b) => (a.createdAt || '').localeCompare(b.createdAt || '') },
   activity_desc:   { label: 'last active',      cmp: (a, b) => (b.lastSeen   || '').localeCompare(a.lastSeen   || '') },
   name_asc:        { label: 'name (a -> z)',    cmp: (a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }) },
 };
 
-function loadSort()   { try { const v = localStorage.getItem(SORT_KEY); return SORTS[v] ? v : SORT_DEFAULT; } catch { return SORT_DEFAULT; } }
-function saveSort(v)  { try { localStorage.setItem(SORT_KEY, v); } catch {} }
-function loadSearch() { try { return localStorage.getItem(SEARCH_KEY) || ''; } catch { return ''; } }
-function saveSearch(v){ try { localStorage.setItem(SEARCH_KEY, v); } catch {} }
+function loadSort(): string { try { const v = localStorage.getItem(SORT_KEY); return v && SORTS[v] ? v : SORT_DEFAULT; } catch { return SORT_DEFAULT; } }
+function saveSort(v: string): void { try { localStorage.setItem(SORT_KEY, v); } catch { /* ignore */ } }
+function loadSearch(): string { try { return localStorage.getItem(SEARCH_KEY) || ''; } catch { return ''; } }
+function saveSearch(v: string): void { try { localStorage.setItem(SEARCH_KEY, v); } catch { /* ignore */ } }
+
+export interface Agent {
+  id: string;
+  name?: string;
+  model?: string;
+  status?: string;
+  cwd?: string;
+  createdAt?: string;
+  lastSeen?: string;
+  starred?: boolean;
+  archived?: boolean;
+  totalTokens?: number;
+  inFlight?: number;
+  [k: string]: unknown;
+}
+
+export interface AgentsSidebarOptions {
+  onSelect?: (id: string) => void;
+  onCreate?: (created: Agent) => void;
+  onDelete?: (id: string) => void;
+}
 
 export class AgentsSidebar {
-  constructor({ onSelect, onCreate, onDelete }) {
+  onSelect?: (id: string) => void;
+  onCreate?: (created: Agent) => void;
+  onDelete?: (id: string) => void;
+
+  agents: Agent[];
+  selectedId: string | null;
+  pollHandle: ReturnType<typeof setInterval> | null;
+  showArchived: boolean;
+  sortKey: string;
+  search: string;
+
+  activeList: HTMLElement;
+  archivedList: HTMLElement;
+  empty: HTMLElement;
+  noMatch: HTMLElement;
+  error: HTMLElement;
+  newBtn: HTMLButtonElement;
+  closeDrawerBtn: HTMLButtonElement;
+  archivedToggle: HTMLButtonElement;
+  searchInput: HTMLInputElement;
+  searchClearBtn: HTMLButtonElement;
+  sortSelect: HTMLSelectElement;
+  root: HTMLElement;
+
+  private _creating?: boolean;
+  private _spawnHandlerWired?: boolean;
+  private _agentsStream?: EventSource | null;
+  private _sseAlive?: boolean;
+  private _onVisibility?: () => void;
+
+  constructor({ onSelect, onCreate, onDelete }: AgentsSidebarOptions) {
     this.onSelect = onSelect;
     this.onCreate = onCreate;
     this.onDelete = onDelete;
@@ -49,54 +95,48 @@ export class AgentsSidebar {
     this.sortKey = loadSort();
     this.search  = loadSearch();
 
-    this.activeList   = el('div', { class: 'agents-list' });
-    this.archivedList = el('div', { class: 'agents-list agents-list--archived' });
+    this.activeList   = el('div', { class: 'agents-list' }) as HTMLElement;
+    this.archivedList = el('div', { class: 'agents-list agents-list--archived' }) as HTMLElement;
     this.archivedList.hidden = true;
 
-    this.empty = el('div', { class: 'agents-empty' }, 'no agents yet');
-    this.noMatch = el('div', { class: 'agents-empty' }, 'no conversations match your search');
-    this.error = el('div', { class: 'agents-empty agents-empty--err' });
+    this.empty = el('div', { class: 'agents-empty' }, 'no agents yet') as HTMLElement;
+    this.noMatch = el('div', { class: 'agents-empty' }, 'no conversations match your search') as HTMLElement;
+    this.error = el('div', { class: 'agents-empty agents-empty--err' }) as HTMLElement;
     this.error.hidden = true;
 
     this.newBtn = el('button', {
       class: 'agents-new-btn',
       title: 'spawn a new agent (auto-named from the first message)',
-      onclick: () => this.spawnNew(),
-    }, '+ new');
+      onclick: () => void this.spawnNew(),
+    }, '+ new') as HTMLButtonElement;
 
-    // Close-drawer button. Hidden on desktop via CSS, shown on mobile.
-    // Dispatches the same event main.js listens to, so behavior matches
-    // backdrop-tap and Escape.
     this.closeDrawerBtn = el('button', {
       class: 'sidebar-close',
       type: 'button',
       title: 'close menu',
       'aria-label': 'close menu',
       onclick: () => document.dispatchEvent(new CustomEvent('grok-remote:close-drawer')),
-    }, '×');
-
-    // (The collapse-sidebar button now lives in the topbar so it stays
-    // reachable when the sidebar itself is hidden. See main.js.)
+    }, '×') as HTMLButtonElement;
 
     this.archivedToggle = el('button', {
       class: 'agents-archived-toggle',
       type: 'button',
       onclick: () => this.toggleArchivedView(),
-    }, 'archived (0)');
+    }, 'archived (0)') as HTMLButtonElement;
 
-    // Search input + clear button.
     this.searchInput = el('input', {
       class: 'sidebar-search-input',
       type: 'search',
       placeholder: 'search conversations',
       value: this.search,
       'aria-label': 'search conversations',
-      oninput: (ev) => {
-        this.search = (ev.target.value || '').trim();
+      oninput: (ev: Event) => {
+        const target = ev.target as HTMLInputElement;
+        this.search = (target.value || '').trim();
         saveSearch(this.search);
         this.renderList();
       },
-    });
+    }) as HTMLInputElement;
     this.searchClearBtn = el('button', {
       class: 'sidebar-search-clear',
       type: 'button',
@@ -109,22 +149,22 @@ export class AgentsSidebar {
         this.renderList();
         this.searchInput.focus();
       },
-    }, '×');
+    }, '×') as HTMLButtonElement;
 
-    // Sort dropdown.
     this.sortSelect = el('select', {
       class: 'sidebar-sort',
       'aria-label': 'sort conversations',
-      onchange: (ev) => {
-        this.sortKey = ev.target.value;
+      onchange: (ev: Event) => {
+        const target = ev.target as HTMLSelectElement;
+        this.sortKey = target.value;
         saveSort(this.sortKey);
         this.renderList();
       },
     },
       ...Object.entries(SORTS).map(([k, s]) =>
-        el('option', { value: k, ...(k === this.sortKey ? { selected: '' } : {}) }, s.label)
-      )
-    );
+        el('option', { value: k, ...(k === this.sortKey ? { selected: '' } : {}) }, s.label),
+      ),
+    ) as HTMLSelectElement;
 
     this.root = el('aside', { class: 'sidebar' },
       el('div', { class: 'sidebar-head' },
@@ -140,10 +180,6 @@ export class AgentsSidebar {
         this.sortSelect,
       ),
       this.error,
-      // sidebar-body is the single scrollable region so the active list
-      // AND the expanded archived section share one scrollbar. Without
-      // this wrapper, the archived disclosure would push past the
-      // viewport with nowhere to overflow.
       el('div', { class: 'sidebar-body' },
         this.activeList,
         el('div', { class: 'agents-archived' },
@@ -151,13 +187,11 @@ export class AgentsSidebar {
           this.archivedList,
         ),
       ),
-    );
+    ) as HTMLElement;
   }
 
-  // Returns the comparator for the current sort. Starred items always
-  // float to the top within each sort.
-  _sortAgents(list) {
-    const sorter = SORTS[this.sortKey] || SORTS[SORT_DEFAULT];
+  private _sortAgents(list: Agent[]): Agent[] {
+    const sorter = SORTS[this.sortKey] || SORTS[SORT_DEFAULT]!;
     return list.slice().sort((a, b) => {
       const s = (b.starred ? 1 : 0) - (a.starred ? 1 : 0);
       if (s) return s;
@@ -165,7 +199,7 @@ export class AgentsSidebar {
     });
   }
 
-  _matchesSearch(a) {
+  private _matchesSearch(a: Agent): boolean {
     if (!this.search) return true;
     const needle = this.search.toLowerCase();
     return (a.name || '').toLowerCase().includes(needle)
@@ -173,13 +207,13 @@ export class AgentsSidebar {
         || (a.model || '').toLowerCase().includes(needle);
   }
 
-  toggleArchivedView() {
+  toggleArchivedView(): void {
     this.showArchived = !this.showArchived;
     this.archivedList.hidden = !this.showArchived;
     this.renderArchivedToggle();
   }
 
-  async spawnNew() {
+  async spawnNew(): Promise<void> {
     if (this._creating) return;
     this._creating = true;
     this.newBtn.disabled = true;
@@ -187,12 +221,13 @@ export class AgentsSidebar {
     const prevLabel = this.newBtn.textContent;
     this.newBtn.textContent = 'spawning...';
     try {
-      const created = await api.createAgent({});
+      const created = await api.createAgent({}) as Agent;
       if (typeof this.onCreate === 'function') this.onCreate(created);
       await this.refresh();
       if (created && created.id) this.select(created.id);
     } catch (e) {
-      this.error.textContent = e.message || 'failed to spawn agent';
+      const msg = e instanceof Error ? e.message : 'failed to spawn agent';
+      this.error.textContent = msg;
       this.error.hidden = false;
     } finally {
       this._creating = false;
@@ -201,31 +236,24 @@ export class AgentsSidebar {
     }
   }
 
-  mount(parent) {
+  mount(parent: HTMLElement): void {
     parent.appendChild(this.root);
-    this.refresh();
-    // Prefer SSE push from /api/agents/stream; if it never opens (older server
-    // or transient failure), fall back to the 4s poll. The poll also serves as
-    // the recovery path in case the EventSource closes for too long.
+    void this.refresh();
     this._startSseStream();
     this.startPolling();
-    // Remote spawn trigger: the chat empty-state "New conversation" button
-    // dispatches this event so it can reuse the same createAgent + select
-    // flow without duplicating it.
     if (!this._spawnHandlerWired) {
-      document.addEventListener('grok-remote:spawn-agent', () => this.spawnNew());
+      document.addEventListener('grok-remote:spawn-agent', () => void this.spawnNew());
       this._spawnHandlerWired = true;
     }
   }
 
-  _startSseStream() {
+  private _startSseStream(): void {
     if (this._agentsStream) return;
     try {
       const es = new EventSource(api.agentsStreamUrl());
       this._agentsStream = es;
-      const apply = () => { /* delegate to refresh on any event */ };
       es.addEventListener('open', () => { this._sseAlive = true; });
-      es.addEventListener('agents_snapshot', (ev) => {
+      es.addEventListener('agents_snapshot', (ev: MessageEvent) => {
         try {
           const d = JSON.parse(ev.data);
           if (d && Array.isArray(d.agents)) {
@@ -233,107 +261,105 @@ export class AgentsSidebar {
             this.renderList();
             document.dispatchEvent(new CustomEvent('grok-remote:agents-refresh', { detail: d.agents }));
           }
-        } catch { /* ignore parse errors */ }
+        } catch { /* ignore */ }
       });
-      const onMutation = () => { this.refresh(); };
+      const onMutation = (): void => { void this.refresh(); };
       es.addEventListener('agent_added',   onMutation);
       es.addEventListener('agent_removed', onMutation);
       es.addEventListener('agent_updated', onMutation);
       es.addEventListener('agent_status',  onMutation);
-      // Token deltas are high-frequency during streaming; patch in-place
-      // and re-render the affected row instead of round-tripping a refresh.
-      es.addEventListener('agent_tokens', (ev) => {
+      es.addEventListener('agent_tokens', (ev: MessageEvent) => {
         try {
-          const d = JSON.parse(ev.data);
+          const d = JSON.parse(ev.data) as { id?: string; totalTokens?: unknown };
           if (!d || !d.id || typeof d.totalTokens !== 'number') return;
-          const idx = this.agents.findIndex(a => a && a.id === d.id);
+          const idx = this.agents.findIndex((a) => a && a.id === d.id);
           if (idx < 0) return;
-          this.agents[idx] = { ...this.agents[idx], totalTokens: d.totalTokens };
+          this.agents[idx] = { ...this.agents[idx]!, totalTokens: d.totalTokens };
           this.renderList();
           document.dispatchEvent(new CustomEvent('grok-remote:agents-refresh', { detail: this.agents }));
         } catch { /* ignore */ }
       });
-      // inFlight tool-call count: same in-place patch pattern.
-      es.addEventListener('agent_inflight', (ev) => {
+      es.addEventListener('agent_inflight', (ev: MessageEvent) => {
         try {
-          const d = JSON.parse(ev.data);
+          const d = JSON.parse(ev.data) as { id?: string; inFlight?: unknown };
           if (!d || !d.id || typeof d.inFlight !== 'number') return;
-          const idx = this.agents.findIndex(a => a && a.id === d.id);
+          const idx = this.agents.findIndex((a) => a && a.id === d.id);
           if (idx < 0) return;
-          this.agents[idx] = { ...this.agents[idx], inFlight: d.inFlight };
+          this.agents[idx] = { ...this.agents[idx]!, inFlight: d.inFlight };
           this.renderList();
           document.dispatchEvent(new CustomEvent('grok-remote:agents-refresh', { detail: this.agents }));
         } catch { /* ignore */ }
       });
       es.addEventListener('error', () => { this._sseAlive = false; });
-      apply();
     } catch {
       this._agentsStream = null;
     }
   }
 
-  _stopSseStream() {
+  private _stopSseStream(): void {
     if (this._agentsStream) {
       try { this._agentsStream.close(); } catch { /* ignore */ }
       this._agentsStream = null;
     }
   }
 
-  startPolling() {
+  startPolling(): void {
     if (this.pollHandle) clearInterval(this.pollHandle);
-    // Skip polling when the tab is hidden OR when the SSE stream is healthy.
-    // If SSE flakes, this is the recovery path.
     this.pollHandle = setInterval(() => {
       if (document.hidden) return;
       if (this._sseAlive) return;
-      this.refresh();
+      void this.refresh();
     }, 4000);
     if (!this._onVisibility) {
-      this._onVisibility = () => {
-        if (!document.hidden) this.refresh();
+      this._onVisibility = (): void => {
+        if (!document.hidden) void this.refresh();
       };
       document.addEventListener('visibilitychange', this._onVisibility);
     }
   }
 
-  stopPolling() {
+  stopPolling(): void {
     if (this.pollHandle) {
       clearInterval(this.pollHandle);
       this.pollHandle = null;
     }
     if (this._onVisibility) {
       document.removeEventListener('visibilitychange', this._onVisibility);
-      this._onVisibility = null;
+      this._onVisibility = undefined;
     }
     this._stopSseStream();
   }
 
-  async refresh() {
+  async refresh(): Promise<void> {
     try {
       const data = await api.listAgents();
-      const agents = Array.isArray(data) ? data : (data && Array.isArray(data.agents) ? data.agents : []);
+      const agents: Agent[] = Array.isArray(data)
+        ? data as Agent[]
+        : (data && typeof data === 'object' && Array.isArray((data as { agents?: unknown }).agents)
+            ? (data as { agents: Agent[] }).agents
+            : []);
       this.agents = agents;
       this.renderList();
       document.dispatchEvent(new CustomEvent('grok-remote:agents-refresh', { detail: agents }));
     } catch (e) {
       this.agents = [];
-      this.renderList(e.message);
+      const msg = e instanceof Error ? e.message : String(e);
+      this.renderList(msg);
     }
   }
 
-  renderArchivedToggle(count) {
+  renderArchivedToggle(count?: number): void {
     const n = (typeof count === 'number')
       ? count
-      : this.agents.filter(a => a.archived).length;
+      : this.agents.filter((a) => a.archived).length;
     const label = n === 0 ? 'archived (0)' : `${this.showArchived ? '▼' : '▶'} archived (${n})`;
     this.archivedToggle.textContent = label;
     this.archivedToggle.disabled = n === 0;
   }
 
-  renderList(errorMessage) {
+  renderList(errorMessage?: string): void {
     this.activeList.replaceChildren();
     this.archivedList.replaceChildren();
-    // Reflect search state on the clear button.
     if (this.searchClearBtn) this.searchClearBtn.hidden = !this.search;
 
     if (errorMessage) {
@@ -343,10 +369,10 @@ export class AgentsSidebar {
       return;
     }
 
-    const allActive   = this.agents.filter(a => !a.archived);
-    const allArchived = this.agents.filter(a =>  a.archived);
-    const active   = this._sortAgents(allActive).filter(a => this._matchesSearch(a));
-    const archived = this._sortAgents(allArchived).filter(a => this._matchesSearch(a));
+    const allActive   = this.agents.filter((a) => !a.archived);
+    const allArchived = this.agents.filter((a) =>  a.archived);
+    const active   = this._sortAgents(allActive).filter((a) => this._matchesSearch(a));
+    const archived = this._sortAgents(allArchived).filter((a) => this._matchesSearch(a));
 
     if (!allActive.length) {
       this.activeList.appendChild(this.empty);
@@ -360,60 +386,57 @@ export class AgentsSidebar {
     this.renderArchivedToggle(allArchived.length);
   }
 
-  renderItem(a, isArchived) {
+  renderItem(a: Agent, isArchived: boolean): HTMLElement {
     const isSelected = a.id === this.selectedId;
     const status = a.status || 'idle';
     const isDisconnected = status === 'disconnected' || status === 'exited';
     const dot = el('span', { class: `agent-dot agent-dot--${status}` });
 
-    // Star toggle (always available).
     const starBtn = el('button', {
       class: `agent-star${a.starred ? ' is-on' : ''}`,
       title: a.starred ? 'unstar' : 'star',
       type: 'button',
-      onclick: async (ev) => {
+      onclick: async (ev: MouseEvent) => {
         ev.stopPropagation();
         starBtn.disabled = true;
         try {
           await api.updateAgent(a.id, { starred: !a.starred });
           await this.refresh();
         } catch (e) {
-          alert(`star failed: ${e.message}`);
+          const msg = e instanceof Error ? e.message : String(e);
+          alert(`star failed: ${msg}`);
         } finally {
           starBtn.disabled = false;
         }
       },
-    }, a.starred ? '★' : '☆');
+    }, a.starred ? '★' : '☆') as HTMLButtonElement;
 
-    // Connect / disconnect (live agents only).
-    const toggleBtn = !isArchived ? el('button', {
+    const toggleBtn: HTMLButtonElement | null = !isArchived ? (el('button', {
       class: `agent-link${isDisconnected ? ' agent-link--off' : ''}`,
       title: isDisconnected ? 'connect (resume conversation)' : 'disconnect (stop process, keep history)',
-      onclick: async (ev) => {
+      onclick: async (ev: MouseEvent) => {
         ev.stopPropagation();
-        toggleBtn.disabled = true;
+        if (toggleBtn) toggleBtn.disabled = true;
         try {
           if (isDisconnected) await api.connect(a.id);
           else await api.disconnect(a.id);
           await this.refresh();
         } catch (e) {
-          alert(`${isDisconnected ? 'connect' : 'disconnect'} failed: ${e.message}`);
+          const msg = e instanceof Error ? e.message : String(e);
+          alert(`${isDisconnected ? 'connect' : 'disconnect'} failed: ${msg}`);
         } finally {
-          toggleBtn.disabled = false;
+          if (toggleBtn) toggleBtn.disabled = false;
         }
       },
-    }, isDisconnected ? 'connect' : 'disconnect') : null;
+    }, isDisconnected ? 'connect' : 'disconnect') as HTMLButtonElement) : null;
 
-    // Close button:
-    //   active   -> "archive" (soft remove from main view)
-    //   archived -> "restore" + "delete forever"
-    let closeArea;
+    let closeArea: HTMLElement | null;
     if (!isArchived) {
       const archiveBtn = el('button', {
         class: 'agent-archive',
         type: 'button',
         title: 'archive (move to archived; you can restore or delete later)',
-        onclick: async (ev) => {
+        onclick: async (ev: MouseEvent) => {
           ev.stopPropagation();
           archiveBtn.disabled = true;
           try {
@@ -421,36 +444,38 @@ export class AgentsSidebar {
             if (this.selectedId === a.id) this.selectedId = null;
             await this.refresh();
           } catch (e) {
-            alert(`archive failed: ${e.message}`);
+            const msg = e instanceof Error ? e.message : String(e);
+            alert(`archive failed: ${msg}`);
           } finally {
             archiveBtn.disabled = false;
           }
         },
-      }, '×');
+      }, '×') as HTMLButtonElement;
       closeArea = archiveBtn;
     } else {
       const restoreBtn = el('button', {
         class: 'agent-restore',
         type: 'button',
         title: 'restore from archive',
-        onclick: async (ev) => {
+        onclick: async (ev: MouseEvent) => {
           ev.stopPropagation();
           restoreBtn.disabled = true;
           try {
             await api.updateAgent(a.id, { archived: false });
             await this.refresh();
           } catch (e) {
-            alert(`restore failed: ${e.message}`);
+            const msg = e instanceof Error ? e.message : String(e);
+            alert(`restore failed: ${msg}`);
           } finally {
             restoreBtn.disabled = false;
           }
         },
-      }, 'restore');
+      }, 'restore') as HTMLButtonElement;
       const deleteBtn = el('button', {
         class: 'agent-delete-forever',
         type: 'button',
         title: 'delete forever (removes history + uploads)',
-        onclick: async (ev) => {
+        onclick: async (ev: MouseEvent) => {
           ev.stopPropagation();
           if (!confirm(`Delete "${a.name || a.id}" forever?\nThis removes its history and uploaded files. Cannot be undone.`)) return;
           try {
@@ -459,11 +484,12 @@ export class AgentsSidebar {
             if (this.selectedId === a.id) this.selectedId = null;
             await this.refresh();
           } catch (e) {
-            alert(`delete failed: ${e.message}`);
+            const msg = e instanceof Error ? e.message : String(e);
+            alert(`delete failed: ${msg}`);
           }
         },
-      }, 'delete');
-      closeArea = el('div', { class: 'agent-archived-actions' }, restoreBtn, deleteBtn);
+      }, 'delete') as HTMLButtonElement;
+      closeArea = el('div', { class: 'agent-archived-actions' }, restoreBtn, deleteBtn) as HTMLElement;
     }
 
     const item = el('div', {
@@ -500,11 +526,11 @@ export class AgentsSidebar {
         toggleBtn,
       ),
       a.cwd ? el('div', { class: 'agent-cwd' }, a.cwd) : null,
-    );
+    ) as HTMLElement;
     return item;
   }
 
-  select(id) {
+  select(id: string): void {
     this.selectedId = id;
     this.renderList();
     if (typeof this.onSelect === 'function') this.onSelect(id);

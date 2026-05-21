@@ -10,7 +10,7 @@
 
 import Split from 'split.js';
 import { api } from './lib/api';
-import { AgentsSidebar } from './views/agents.js';
+import { AgentsSidebar } from './views/agents';
 import { ChatView } from './views/chat.js';
 import { SettingsView } from './views/settings';
 import { el } from './lib/render.js';

@@ -14,8 +14,8 @@
 import Split from 'split.js';
 import { api } from '../lib/api';
 import { openStream } from '../lib/sse';
-import { mountFilesTab, unmountFilesTab } from './files.js';
-import { mountTraceTab, unmountTraceTab } from './trace.js';
+import { mountFilesTab, unmountFilesTab } from './files';
+import { mountTraceTab, unmountTraceTab } from './trace';
 import { mountScoped as mountFlowTab, unmount as unmountFlowTab } from './system/flow.js';
 import attachSlashPalette from '../lib/slash-palette';
 import { setupImageAttach } from '../lib/attach-images';

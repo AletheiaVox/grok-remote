@@ -145,9 +145,9 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | src/views/changelog-modal.js      | src/views/changelog-modal.ts         |
 | [x]    | src/views/update-modal.js         | src/views/update-modal.ts            |
 | [x]    | src/views/settings.js             | src/views/settings.ts                |
-| [ ]    | src/views/files.js                | src/views/files.ts                   |
-| [ ]    | src/views/agents.js               | src/views/agents.ts                  |
-| [ ]    | src/views/trace.js                | src/views/trace.ts                   |
+| [x]    | src/views/files.js                | src/views/files.ts                   |
+| [x]    | src/views/agents.js               | src/views/agents.ts                  |
+| [x]    | src/views/trace.js                | src/views/trace.ts                   |
 
 ### Phase 6 — system pages
 
