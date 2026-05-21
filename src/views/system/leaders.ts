@@ -1,37 +1,65 @@
 // Leader processes page.
-//
-// Renders a table of running grok leader backends. Per-row controls let
-// the user open a JSON `info` panel and a small profile panel that toggles
-// status / start / stop CPU profiling.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-let activeContainer = null;
-let state = {
-  loading:  false,
-  error:    null,
-  leaders:  [],
-  // pid -> { open: bool, info: any, infoErr: string|null, profileOpen: bool,
-  //          profileStatus: string|null, profileMsg: string|null,
-  //          profileErr: string|null, frequencyHz: string }
-  rows:     new Map(),
-};
-
-export function mount(container) {
-  activeContainer = container;
-  state = { loading: false, error: null, leaders: [], rows: new Map() };
-  render();
-  refresh();
+interface Leader {
+  pid: string | number;
+  cwd?: string;
+  cwd_path?: string;
+  model?: string;
+  attached_clients?: number | unknown[];
+  clients?: number | unknown[];
+  attached?: number | unknown[];
+  uptime?: string;
+  uptime_human?: string;
+  uptime_seconds?: number;
+  memory?: number | string;
+  memory_human?: string;
+  rss?: number;
+  memory_bytes?: number;
+  [k: string]: unknown;
 }
 
-export function unmount() {
+interface RowState {
+  open: boolean;
+  info: unknown;
+  infoErr: string | null;
+  profileOpen: boolean;
+  profileStatus: string | null;
+  profileMsg: string | null;
+  profileErr: string | null;
+  frequencyHz: string;
+}
+
+interface LeadersState {
+  loading: boolean;
+  error: string | null;
+  leaders: Leader[];
+  rows: Map<string, RowState>;
+}
+
+let activeContainer: HTMLElement | null = null;
+let state: LeadersState = freshState();
+
+function freshState(): LeadersState {
+  return { loading: false, error: null, leaders: [], rows: new Map() };
+}
+
+export function mount(container: HTMLElement): void {
+  activeContainer = container;
+  state = freshState();
+  render();
+  void refresh();
+}
+
+export function unmount(): void {
   if (activeContainer) {
     activeContainer.replaceChildren();
     activeContainer = null;
   }
 }
 
-function render() {
+function render(): void {
   if (!activeContainer) return;
   const c = activeContainer;
   c.innerHTML = `
@@ -51,15 +79,15 @@ function render() {
       <div class="leaders-table-wrap" data-role="table"></div>
     </section>
   `;
-  c.querySelector('[data-act=refresh]').addEventListener('click', refresh);
-  c.querySelector('[data-act=kill-all]').addEventListener('click', onKillAll);
+  c.querySelector('[data-act=refresh]')?.addEventListener('click', () => void refresh());
+  c.querySelector('[data-act=kill-all]')?.addEventListener('click', () => void onKillAll());
   renderStatus();
   renderTable();
 }
 
-function renderStatus() {
+function renderStatus(): void {
   if (!activeContainer) return;
-  const el = activeContainer.querySelector('[data-role=status]');
+  const el = activeContainer.querySelector('[data-role=status]') as HTMLElement | null;
   if (!el) return;
   if (state.loading) {
     el.textContent = 'loading...';
@@ -73,9 +101,9 @@ function renderStatus() {
   }
 }
 
-function renderTable() {
+function renderTable(): void {
   if (!activeContainer) return;
-  const wrap = activeContainer.querySelector('[data-role=table]');
+  const wrap = activeContainer.querySelector('[data-role=table]') as HTMLElement | null;
   if (!wrap) return;
   if (state.loading && !state.leaders.length) {
     wrap.innerHTML = '';
@@ -91,7 +119,7 @@ function renderTable() {
   wrap.innerHTML = `
     <table class="leaders-table">
       <thead>
-        <tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr>
+        <tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -101,24 +129,24 @@ function renderTable() {
     const pid = String(ld.pid);
     const row = wrap.querySelector(`tr[data-pid="${cssEscape(pid)}"]`);
     if (!row) continue;
-    row.querySelector('[data-act=toggle-info]')?.addEventListener('click', () => toggleInfo(pid));
+    row.querySelector('[data-act=toggle-info]')?.addEventListener('click', () => void toggleInfo(pid));
     row.querySelector('[data-act=toggle-profile]')?.addEventListener('click', () => toggleProfile(pid));
   }
   for (const ld of state.leaders) {
     const pid = String(ld.pid);
     const detailRow = wrap.querySelector(`tr[data-detail-for="${cssEscape(pid)}"]`);
     if (!detailRow) continue;
-    detailRow.querySelector('[data-act=profile-status]')?.addEventListener('click', () => doProfileStatus(pid));
-    detailRow.querySelector('[data-act=profile-start]')?.addEventListener('click', () => doProfileStart(pid));
-    detailRow.querySelector('[data-act=profile-stop]')?.addEventListener('click', () => doProfileStop(pid));
-    detailRow.querySelector('[data-input=freq]')?.addEventListener('input', (e) => {
+    detailRow.querySelector('[data-act=profile-status]')?.addEventListener('click', () => void doProfileStatus(pid));
+    detailRow.querySelector('[data-act=profile-start]')?.addEventListener('click', () => void doProfileStart(pid));
+    detailRow.querySelector('[data-act=profile-stop]')?.addEventListener('click', () => void doProfileStop(pid));
+    detailRow.querySelector('[data-input=freq]')?.addEventListener('input', (e: Event) => {
       const r = getRow(pid);
-      r.frequencyHz = String(e.target.value || '');
+      r.frequencyHz = String((e.target as HTMLInputElement).value || '');
     });
   }
 }
 
-function renderRow(ld) {
+function renderRow(ld: Leader): string {
   const pid = String(ld.pid);
   const r   = getRow(pid);
   const expanded = r.open || r.profileOpen;
@@ -132,7 +160,7 @@ function renderRow(ld) {
   ];
   const main = `
     <tr data-pid="${escapeHtml(pid)}" class="leaders-row ${expanded ? 'leaders-row--open' : ''}">
-      ${cells.map(c => `<td>${escapeHtml(String(c))}</td>`).join('')}
+      ${cells.map((c) => `<td>${escapeHtml(String(c))}</td>`).join('')}
       <td class="leaders-row-actions">
         <button class="leaders-btn leaders-btn--small" data-act="toggle-info">${r.open ? 'hide' : 'info'}</button>
         <button class="leaders-btn leaders-btn--small" data-act="toggle-profile">${r.profileOpen ? 'hide' : 'profile'}</button>
@@ -140,7 +168,7 @@ function renderRow(ld) {
     </tr>
   `;
   if (!expanded) return main;
-  const sections = [];
+  const sections: string[] = [];
   if (r.open) sections.push(renderInfoSection(r));
   if (r.profileOpen) sections.push(renderProfileSection(r));
   const detail = `
@@ -153,7 +181,7 @@ function renderRow(ld) {
   return main + detail;
 }
 
-function renderInfoSection(r) {
+function renderInfoSection(r: RowState): string {
   if (r.infoErr) {
     return `<div class="leaders-detail-section">
       <div class="leaders-detail-title">info</div>
@@ -172,7 +200,7 @@ function renderInfoSection(r) {
   </div>`;
 }
 
-function renderProfileSection(r) {
+function renderProfileSection(r: RowState): string {
   return `<div class="leaders-detail-section">
     <div class="leaders-detail-title">profile</div>
     <div class="leaders-profile-row">
@@ -189,18 +217,16 @@ function renderProfileSection(r) {
   </div>`;
 }
 
-// ── actions ─────────────────────────────────────────────────────────────
-
-async function refresh() {
+async function refresh(): Promise<void> {
   state.loading = true;
   state.error = null;
   renderStatus();
   try {
-    const resp = await api.leaders.list();
+    const resp = await api.leaders.list() as { data?: unknown };
     const data = (resp && resp.data) || resp;
     state.leaders = normalizeLeaders(data);
   } catch (err) {
-    state.error = err.message || String(err);
+    state.error = err instanceof Error ? err.message : String(err);
     state.leaders = [];
   } finally {
     state.loading = false;
@@ -209,7 +235,7 @@ async function refresh() {
   }
 }
 
-async function onKillAll() {
+async function onKillAll(): Promise<void> {
   if (!confirm('Kill ALL running grok leaders? Active sessions are preserved.')) return;
   state.loading = true;
   state.error = null;
@@ -217,7 +243,7 @@ async function onKillAll() {
   try {
     await api.leaders.killAll();
   } catch (err) {
-    state.error = err.message || String(err);
+    state.error = err instanceof Error ? err.message : String(err);
   } finally {
     state.loading = false;
     renderStatus();
@@ -225,79 +251,77 @@ async function onKillAll() {
   await refresh();
 }
 
-async function toggleInfo(pid) {
+async function toggleInfo(pid: string): Promise<void> {
   const r = getRow(pid);
   r.open = !r.open;
   renderTable();
   if (r.open && r.info == null && !r.infoErr) {
     try {
-      const resp = await api.leaders.info(pid);
+      const resp = await api.leaders.info(pid) as { data?: unknown };
       r.info = (resp && 'data' in resp) ? resp.data : resp;
     } catch (err) {
-      r.infoErr = err.message || String(err);
+      r.infoErr = err instanceof Error ? err.message : String(err);
     }
     renderTable();
   }
 }
 
-function toggleProfile(pid) {
+function toggleProfile(pid: string): void {
   const r = getRow(pid);
   r.profileOpen = !r.profileOpen;
   renderTable();
 }
 
-async function doProfileStatus(pid) {
+async function doProfileStatus(pid: string): Promise<void> {
   const r = getRow(pid);
   r.profileErr = null;
   r.profileMsg = 'loading...';
   renderTable();
   try {
-    const resp = await api.leaders.profileStatus(pid);
+    const resp = await api.leaders.profileStatus(pid) as { output?: string };
     r.profileMsg = (resp && resp.output) || JSON.stringify(resp, null, 2);
   } catch (err) {
     r.profileMsg = null;
-    r.profileErr = err.message || String(err);
+    r.profileErr = err instanceof Error ? err.message : String(err);
   }
   renderTable();
 }
 
-async function doProfileStart(pid) {
+async function doProfileStart(pid: string): Promise<void> {
   const r = getRow(pid);
   r.profileErr = null;
   r.profileMsg = 'starting...';
   renderTable();
-  const body = {};
+  const body: Record<string, unknown> = {};
   const hz = parseInt(r.frequencyHz, 10);
-  if (Number.isFinite(hz) && hz > 0) body.frequencyHz = hz;
+  if (Number.isFinite(hz) && hz > 0) body['frequencyHz'] = hz;
   try {
-    const resp = await api.leaders.profileStart(pid, body);
+    const resp = await api.leaders.profileStart(pid, body) as { output?: string };
     r.profileMsg = (resp && resp.output) || 'profile started';
   } catch (err) {
     r.profileMsg = null;
-    r.profileErr = err.message || String(err);
+    r.profileErr = err instanceof Error ? err.message : String(err);
   }
   renderTable();
 }
 
-async function doProfileStop(pid) {
+async function doProfileStop(pid: string): Promise<void> {
   const r = getRow(pid);
   r.profileErr = null;
   r.profileMsg = 'stopping...';
   renderTable();
   try {
-    const resp = await api.leaders.profileStop(pid, {});
+    const resp = await api.leaders.profileStop(pid, {}) as { path?: string };
     const out = (resp && resp.path) ? `wrote ${resp.path}` : 'profile stopped';
     r.profileMsg = out;
   } catch (err) {
     r.profileMsg = null;
-    r.profileErr = err.message || String(err);
+    r.profileErr = err instanceof Error ? err.message : String(err);
   }
   renderTable();
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────
-
-function getRow(pid) {
+function getRow(pid: string): RowState {
   let r = state.rows.get(pid);
   if (!r) {
     r = {
@@ -310,16 +334,17 @@ function getRow(pid) {
   return r;
 }
 
-function normalizeLeaders(data) {
+function normalizeLeaders(data: unknown): Leader[] {
   if (!data) return [];
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data.leaders)) return data.leaders;
-  if (Array.isArray(data.rows)) return data.rows;
-  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(data)) return data as Leader[];
+  const d = data as Record<string, unknown>;
+  if (Array.isArray(d['leaders'])) return d['leaders'] as Leader[];
+  if (Array.isArray(d['rows'])) return d['rows'] as Leader[];
+  if (Array.isArray(d['data'])) return d['data'] as Leader[];
   return [];
 }
 
-function formatClients(ld) {
+function formatClients(ld: Leader): string {
   const c = ld.attached_clients ?? ld.clients ?? ld.attached ?? null;
   if (c == null) return '';
   if (typeof c === 'number') return String(c);
@@ -327,7 +352,7 @@ function formatClients(ld) {
   return String(c);
 }
 
-function formatMemory(ld) {
+function formatMemory(ld: Leader): string {
   const m = ld.memory ?? ld.memory_human ?? ld.rss ?? ld.memory_bytes;
   if (m == null) return '';
   if (typeof m === 'number') {
@@ -339,7 +364,7 @@ function formatMemory(ld) {
   return String(m);
 }
 
-function formatUptime(secs) {
+function formatUptime(secs: number | undefined): string {
   if (secs == null) return '';
   const s = Number(secs);
   if (!Number.isFinite(s)) return String(secs);
@@ -349,12 +374,12 @@ function formatUptime(secs) {
   return `${Math.floor(s / 86400)}d`;
 }
 
-function truncate(s, n) {
+function truncate(s: unknown, n: number): string {
   const str = String(s || '');
   return str.length > n ? str.slice(0, n - 1) + '...' : str;
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: unknown): string {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -363,6 +388,6 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-function cssEscape(s) {
+function cssEscape(s: unknown): string {
   return String(s).replace(/["\\]/g, '\\$&');
 }

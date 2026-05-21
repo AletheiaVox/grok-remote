@@ -1,27 +1,35 @@
 // Skills management page.
-//
-// Lists every skill grok discovers on this machine: per-cwd (.grok/skills/),
-// repo-shared (<repo-root>/.grok/skills/), user-wide (~/.grok/skills/), and
-// Claude-Code compatibility (~/.claude/skills/).
-//
-// Each skill is rendered as a card with its name, short description, scope
-// badge, usage pill, and action buttons:
-//   view   open SKILL.md inline (read-only)
-//   edit   inline editor (textarea) with save / cancel
-//   hist   revision history list (view + restore)
-//   move   dropdown to relocate the skill into another scope
-//   arch   archive the skill (moves to sibling .archive dir)
-//
-// Archived skills appear in a collapsible section at the bottom with a
-// "restore" button per card.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-let activeContainer = null;
+interface SkillRecord {
+  scope: string;
+  name: string;
+  mdPath: string;
+  dir: string;
+  shortDescription?: string;
+  description?: string;
+  archived?: boolean;
+  usageCount?: number;
+  lastUsedAt?: string;
+}
+
+interface SkillsResponse {
+  ok?: boolean;
+  error?: string;
+  skills?: SkillRecord[];
+  sources?: { scope: string; dir: string }[];
+}
+
+interface SkillReadResponse { ok?: boolean; content?: string; error?: string }
+interface SkillHistoryItem { ts: string; size?: number }
+interface SkillHistoryResponse { ok?: boolean; history?: SkillHistoryItem[]; error?: string }
+
+let activeContainer: HTMLElement | null = null;
 let aborted = false;
-let cachedData = null;
+let cachedData: SkillsResponse | null = null;
 
-const SCOPE_LABEL = {
+const SCOPE_LABEL: Record<string, string> = {
   'cwd':          'cwd',
   'repo':         'repo',
   'user-grok':    '~/.grok',
@@ -29,7 +37,7 @@ const SCOPE_LABEL = {
 };
 const SCOPE_ORDER = ['cwd', 'repo', 'user-grok', 'user-claude'];
 
-export async function mount(container) {
+export async function mount(container: HTMLElement): Promise<void> {
   activeContainer = container;
   aborted = false;
   container.replaceChildren();
@@ -49,7 +57,7 @@ export async function mount(container) {
   await reload(container);
 }
 
-export function unmount() {
+export function unmount(): void {
   aborted = true;
   if (activeContainer) {
     activeContainer.replaceChildren();
@@ -58,11 +66,11 @@ export function unmount() {
   cachedData = null;
 }
 
-async function reload(container) {
-  const sectionEl = container.querySelector('.skills-page');
+async function reload(container: HTMLElement): Promise<void> {
+  const sectionEl = container.querySelector('.skills-page') as HTMLElement | null;
   if (!sectionEl) return;
   try {
-    const data = await api.skills.list({ includeArchived: true });
+    const data = await api.skills.list({ includeArchived: true }) as SkillsResponse;
     if (aborted || activeContainer !== container) return;
     if (!data || !data.ok) {
       sectionEl.innerHTML = sectionEl.innerHTML.replace(/<div class="skills-loading">[^<]*<\/div>/, '');
@@ -79,13 +87,12 @@ async function reload(container) {
     sectionEl.querySelector('.skills-loading')?.remove();
     const empty = document.createElement('div');
     empty.className = 'system-page-empty';
-    empty.textContent = 'failed to load: ' + err.message;
+    empty.textContent = 'failed to load: ' + (err instanceof Error ? err.message : String(err));
     sectionEl.appendChild(empty);
   }
 }
 
-function render(sectionEl, data) {
-  // Wipe everything except the header.
+function render(sectionEl: HTMLElement, data: SkillsResponse): void {
   const header = sectionEl.querySelector('.system-page-header');
   sectionEl.replaceChildren();
   if (header) sectionEl.appendChild(header);
@@ -103,8 +110,8 @@ function render(sectionEl, data) {
   }
   sectionEl.appendChild(sourcesEl);
 
-  const active = skills.filter(s => !s.archived);
-  const archived = skills.filter(s => s.archived);
+  const active = skills.filter((s) => !s.archived);
+  const archived = skills.filter((s) => s.archived);
 
   if (!active.length && !archived.length) {
     const empty = document.createElement('div');
@@ -114,11 +121,10 @@ function render(sectionEl, data) {
     return;
   }
 
-  // Active skills, grouped by scope.
-  const grouped = new Map();
+  const grouped = new Map<string, SkillRecord[]>();
   for (const s of active) {
     if (!grouped.has(s.scope)) grouped.set(s.scope, []);
-    grouped.get(s.scope).push(s);
+    grouped.get(s.scope)!.push(s);
   }
   for (const scope of SCOPE_ORDER) {
     const items = grouped.get(scope);
@@ -157,7 +163,7 @@ function render(sectionEl, data) {
   }
 }
 
-function makeCard(sk, sectionEl) {
+function makeCard(sk: SkillRecord, sectionEl: HTMLElement): HTMLElement {
   const card = document.createElement('article');
   card.className = `skills-card skills-scope--${sk.scope}${sk.archived ? ' skills-card--archived' : ''}`;
   const desc = sk.shortDescription || sk.description || '(no description)';
@@ -179,35 +185,33 @@ function makeCard(sk, sectionEl) {
     <div class="skills-card-edit hidden"></div>
     <div class="skills-card-history hidden"></div>
   `;
-  const actions = card.querySelector('.skills-card-actions');
-  const body    = card.querySelector('.skills-card-body');
-  const editEl  = card.querySelector('.skills-card-edit');
-  const histEl  = card.querySelector('.skills-card-history');
+  const actions = card.querySelector('.skills-card-actions') as HTMLElement;
+  const body    = card.querySelector('.skills-card-body') as HTMLElement;
+  const editEl  = card.querySelector('.skills-card-edit') as HTMLElement;
+  const histEl  = card.querySelector('.skills-card-history') as HTMLElement;
 
-  const mkBtn = (label, cls, onclick) => {
+  const mkBtn = (label: string, cls: string, onclick: () => void | Promise<void>): HTMLButtonElement => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = `skills-card-btn ${cls}`;
     b.textContent = label;
-    b.addEventListener('click', onclick);
+    b.addEventListener('click', () => void onclick());
     return b;
   };
 
   if (sk.archived) {
     actions.appendChild(mkBtn('restore', 'skills-card-btn--good', async () => {
-      try { await api.skills.restore(sk.scope, sk.name); await reload(activeContainer); }
-      catch (err) { alert('restore failed: ' + err.message); }
+      try { await api.skills.restore(sk.scope, sk.name); if (activeContainer) await reload(activeContainer); }
+      catch (err) { const msg = err instanceof Error ? err.message : String(err); alert('restore failed: ' + msg); }
     }));
     actions.appendChild(mkBtn('view SKILL.md', '', () => toggleView(sk, body, actions)));
     return card;
   }
 
-  // Active card actions.
   actions.appendChild(mkBtn('view', '', () => toggleView(sk, body, actions)));
   actions.appendChild(mkBtn('edit', '', () => toggleEdit(sk, editEl, actions, sectionEl)));
   actions.appendChild(mkBtn('history', '', () => toggleHistory(sk, histEl, actions, sectionEl)));
 
-  // Move-to dropdown.
   const moveSel = document.createElement('select');
   moveSel.className = 'skills-card-move';
   const defaultOpt = document.createElement('option');
@@ -227,9 +231,10 @@ function makeCard(sk, sectionEl) {
     moveSel.disabled = true;
     try {
       await api.skills.move(sk.scope, sk.name, to);
-      await reload(activeContainer);
+      if (activeContainer) await reload(activeContainer);
     } catch (err) {
-      alert('move failed: ' + err.message);
+      const msg = err instanceof Error ? err.message : String(err);
+      alert('move failed: ' + msg);
       moveSel.value = '';
       moveSel.disabled = false;
     }
@@ -238,21 +243,21 @@ function makeCard(sk, sectionEl) {
 
   actions.appendChild(mkBtn('archive', 'skills-card-btn--warn', async () => {
     if (!confirm(`archive /${sk.name}? It moves into the scope's .archive folder.`)) return;
-    try { await api.skills.archive(sk.scope, sk.name); await reload(activeContainer); }
-    catch (err) { alert('archive failed: ' + err.message); }
+    try { await api.skills.archive(sk.scope, sk.name); if (activeContainer) await reload(activeContainer); }
+    catch (err) { const msg = err instanceof Error ? err.message : String(err); alert('archive failed: ' + msg); }
   }));
 
   return card;
 }
 
-// Track open panel state so we can close siblings on toggle.
-function hideAllPanels(card) {
+function hideAllPanels(card: Element | null): void {
+  if (!card) return;
   card.querySelector('.skills-card-body')?.classList.add('hidden');
   card.querySelector('.skills-card-edit')?.classList.add('hidden');
   card.querySelector('.skills-card-history')?.classList.add('hidden');
 }
 
-async function toggleView(sk, body, actions) {
+async function toggleView(sk: SkillRecord, body: HTMLElement, actions: HTMLElement): Promise<void> {
   const card = actions.closest('.skills-card');
   if (!body.classList.contains('hidden')) {
     body.classList.add('hidden');
@@ -262,15 +267,16 @@ async function toggleView(sk, body, actions) {
   body.textContent = 'loading...';
   body.classList.remove('hidden');
   try {
-    const r = await api.skills.read(sk.mdPath);
-    if (r && r.ok) body.textContent = r.content;
+    const r = await api.skills.read(sk.mdPath) as SkillReadResponse;
+    if (r && r.ok) body.textContent = r.content || '';
     else body.textContent = 'error: ' + ((r && r.error) || 'unknown');
   } catch (err) {
-    body.textContent = 'error: ' + err.message;
+    const msg = err instanceof Error ? err.message : String(err);
+    body.textContent = 'error: ' + msg;
   }
 }
 
-async function toggleEdit(sk, editEl, actions, sectionEl) {
+async function toggleEdit(sk: SkillRecord, editEl: HTMLElement, actions: HTMLElement, _sectionEl: HTMLElement): Promise<void> {
   const card = actions.closest('.skills-card');
   if (!editEl.classList.contains('hidden')) {
     editEl.classList.add('hidden');
@@ -281,11 +287,12 @@ async function toggleEdit(sk, editEl, actions, sectionEl) {
   editEl.innerHTML = `<div class="skills-card-edit-loading">loading...</div>`;
   let original = '';
   try {
-    const r = await api.skills.read(sk.mdPath);
-    if (r && r.ok) original = r.content;
+    const r = await api.skills.read(sk.mdPath) as SkillReadResponse;
+    if (r && r.ok) original = r.content || '';
     else throw new Error((r && r.error) || 'read failed');
   } catch (err) {
-    editEl.innerHTML = `<div class="skills-card-edit-err">load failed: ${escapeHtml(err.message)}</div>`;
+    const msg = err instanceof Error ? err.message : String(err);
+    editEl.innerHTML = `<div class="skills-card-edit-err">load failed: ${escapeHtml(msg)}</div>`;
     return;
   }
   editEl.replaceChildren();
@@ -313,9 +320,10 @@ async function toggleEdit(sk, editEl, actions, sectionEl) {
     try {
       await api.skills.saveContent(sk.scope, sk.name, ta.value);
       status.textContent = 'saved.';
-      await reload(activeContainer);
+      if (activeContainer) await reload(activeContainer);
     } catch (err) {
-      status.textContent = 'save failed: ' + err.message;
+      const msg = err instanceof Error ? err.message : String(err);
+      status.textContent = 'save failed: ' + msg;
       saveBtn.disabled = false;
       cancelBtn.disabled = false;
     }
@@ -328,7 +336,7 @@ async function toggleEdit(sk, editEl, actions, sectionEl) {
   editEl.appendChild(bar);
 }
 
-async function toggleHistory(sk, histEl, actions, sectionEl) {
+async function toggleHistory(sk: SkillRecord, histEl: HTMLElement, actions: HTMLElement, _sectionEl: HTMLElement): Promise<void> {
   const card = actions.closest('.skills-card');
   if (!histEl.classList.contains('hidden')) {
     histEl.classList.add('hidden');
@@ -337,13 +345,14 @@ async function toggleHistory(sk, histEl, actions, sectionEl) {
   hideAllPanels(card);
   histEl.classList.remove('hidden');
   histEl.innerHTML = `<div class="skills-card-edit-loading">loading...</div>`;
-  let list = [];
+  let list: SkillHistoryItem[] = [];
   try {
-    const r = await api.skills.history(sk.scope, sk.name);
+    const r = await api.skills.history(sk.scope, sk.name) as SkillHistoryResponse;
     if (r && r.ok) list = r.history || [];
     else throw new Error((r && r.error) || 'history failed');
   } catch (err) {
-    histEl.innerHTML = `<div class="skills-card-edit-err">history failed: ${escapeHtml(err.message)}</div>`;
+    const msg = err instanceof Error ? err.message : String(err);
+    histEl.innerHTML = `<div class="skills-card-edit-err">history failed: ${escapeHtml(msg)}</div>`;
     return;
   }
   histEl.replaceChildren();
@@ -369,9 +378,12 @@ async function toggleHistory(sk, histEl, actions, sectionEl) {
       viewer.classList.remove('hidden');
       viewer.textContent = 'loading...';
       try {
-        const r = await api.skills.historySnapshot(sk.scope, sk.name, item.ts);
-        viewer.textContent = (r && r.ok) ? r.content : ('error: ' + ((r && r.error) || 'unknown'));
-      } catch (err) { viewer.textContent = 'error: ' + err.message; }
+        const r = await api.skills.historySnapshot(sk.scope, sk.name, item.ts) as SkillReadResponse;
+        viewer.textContent = (r && r.ok) ? (r.content || '') : ('error: ' + ((r && r.error) || 'unknown'));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        viewer.textContent = 'error: ' + msg;
+      }
     });
     const sizeEl = document.createElement('span');
     sizeEl.className = 'skills-card-history-size';
@@ -386,9 +398,10 @@ async function toggleHistory(sk, histEl, actions, sectionEl) {
       restoreBtn.disabled = true;
       try {
         await api.skills.historyRestore(sk.scope, sk.name, item.ts);
-        await reload(activeContainer);
+        if (activeContainer) await reload(activeContainer);
       } catch (err) {
-        alert('restore failed: ' + err.message);
+        const msg = err instanceof Error ? err.message : String(err);
+        alert('restore failed: ' + msg);
         restoreBtn.disabled = false;
       }
     });
@@ -401,15 +414,19 @@ async function toggleHistory(sk, histEl, actions, sectionEl) {
   histEl.appendChild(viewer);
 }
 
-function shortenPath(p) {
+function shortenPath(p: string | null | undefined): string {
   if (!p) return '';
   const home = '/Users/dan';
   if (p.startsWith(home)) return '~' + p.slice(home.length);
   return p;
 }
 
-function escapeHtml(s) {
-  return String(s || '').replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
+const ESCAPE_MAP: Record<string, string> = {
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+};
+
+function escapeHtml(s: unknown): string {
+  return String(s || '').replace(/[&<>"']/g, (c) => ESCAPE_MAP[c] ?? c);
 }
+
+void cachedData;
