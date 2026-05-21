@@ -5,24 +5,51 @@
 // deleted. The page also keeps the legacy "clear" buttons that route through
 // the grok CLI (`grok memory clear --scope`).
 //
-// Endpoints used live in lib/routes/system/memory.js.
+// Endpoints used live in lib/routes/system/memory.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-const SCOPE_LABEL = {
+interface MemoryFile {
+  name: string;
+  path: string;
+  size: number;
+  mtime?: string;
+  snippet?: string;
+}
+interface MemoryRoot {
+  scope: string;
+  dir: string;
+  exists: boolean;
+  files?: MemoryFile[];
+}
+interface MemoryData {
+  roots?: MemoryRoot[];
+}
+interface ReadResponse {
+  ok?: boolean;
+  content?: string;
+  error?: string;
+}
+interface CreateResponse {
+  ok?: boolean;
+  path?: string;
+  error?: string;
+}
+
+const SCOPE_LABEL: Record<string, string> = {
   workspace: 'workspace',
   global:    'global',
 };
 const SCOPE_ORDER = ['workspace', 'global'];
 
-let activeContainer = null;
+let activeContainer: HTMLElement | null = null;
 let aborted = false;
-let cachedData = null;
-let selectedPath = null;
+let cachedData: MemoryData | null = null;
+let selectedPath: string | null = null;
 let editing = false;
 let filterText = '';
 
-export async function mount(container) {
+export async function mount(container: HTMLElement): Promise<void> {
   activeContainer = container;
   aborted = false;
   selectedPath = null;
@@ -75,7 +102,7 @@ export async function mount(container) {
   await reload(container);
 }
 
-export function unmount() {
+export function unmount(): void {
   aborted = true;
   if (activeContainer) {
     activeContainer.replaceChildren();
@@ -86,55 +113,49 @@ export function unmount() {
   editing = false;
 }
 
-// ---------- core ----------
-
-async function reload(container) {
-  const sidebar = container.querySelector('[data-role="sidebar"]');
+async function reload(container: HTMLElement): Promise<void> {
+  const sidebar = container.querySelector<HTMLElement>('[data-role="sidebar"]');
   if (sidebar) sidebar.innerHTML = `<div class="memory-sidebar-loading">loading...</div>`;
   try {
-    const data = await api.memory.get();
+    const data = await api.memory.get() as MemoryData;
     if (aborted || activeContainer !== container) return;
     cachedData = data;
     renderSidebar(container);
-    // Keep selection if the file still exists.
     if (selectedPath && !findRecord(selectedPath)) {
       selectedPath = null;
       editing = false;
-      renderViewer(container);
+      void renderViewer(container);
     } else if (selectedPath) {
-      // Refresh viewer (size/mtime may have changed).
-      renderViewer(container);
+      void renderViewer(container);
     } else {
-      renderViewer(container);
+      void renderViewer(container);
     }
   } catch (err) {
     if (aborted || activeContainer !== container) return;
-    showError(container, err.message);
+    showError(container, err instanceof Error ? err.message : String(err));
     if (sidebar) sidebar.innerHTML = '';
   }
 }
 
-function showError(container, msg) {
-  const errEl = container.querySelector('[data-role="error"]');
+function showError(container: HTMLElement, msg: string): void {
+  const errEl = container.querySelector<HTMLElement>('[data-role="error"]');
   if (!errEl) return;
   errEl.hidden = false;
   errEl.textContent = msg || 'unknown error';
 }
 
-function clearError(container) {
-  const errEl = container.querySelector('[data-role="error"]');
+function clearError(container: HTMLElement): void {
+  const errEl = container.querySelector<HTMLElement>('[data-role="error"]');
   if (!errEl) return;
   errEl.hidden = true;
   errEl.textContent = '';
 }
 
-// ---------- sidebar (file list) ----------
-
-function renderSidebar(container) {
-  const sidebar = container.querySelector('[data-role="sidebar"]');
+function renderSidebar(container: HTMLElement): void {
+  const sidebar = container.querySelector<HTMLElement>('[data-role="sidebar"]');
   if (!sidebar) return;
   sidebar.replaceChildren();
-  const roots = Array.isArray(cachedData && cachedData.roots) ? cachedData.roots : [];
+  const roots = Array.isArray(cachedData && cachedData.roots) ? cachedData!.roots! : [];
   if (!roots.length) {
     const empty = document.createElement('div');
     empty.className = 'memory-sidebar-loading';
@@ -142,10 +163,9 @@ function renderSidebar(container) {
     sidebar.appendChild(empty);
     return;
   }
-  // Order workspace then global.
-  const ordered = SCOPE_ORDER
+  const ordered: MemoryRoot[] = SCOPE_ORDER
     .map(s => roots.find(r => r.scope === s))
-    .filter(Boolean)
+    .filter((r): r is MemoryRoot => Boolean(r))
     .concat(roots.filter(r => !SCOPE_ORDER.includes(r.scope)));
 
   for (const root of ordered) {
@@ -153,7 +173,7 @@ function renderSidebar(container) {
   }
 }
 
-function renderScopeGroup(container, root) {
+function renderScopeGroup(container: HTMLElement, root: MemoryRoot): HTMLElement {
   const group = document.createElement('section');
   group.className = 'memory-scope';
   group.dataset.scope = root.scope;
@@ -172,7 +192,7 @@ function renderScopeGroup(container, root) {
   newBtn.className = 'memory-scope-btn';
   newBtn.textContent = '+ new';
   newBtn.title = 'create a new memory file in this scope';
-  newBtn.addEventListener('click', () => createFile(container, root.scope));
+  newBtn.addEventListener('click', () => { void createFile(container, root.scope); });
   actions.appendChild(newBtn);
 
   const clearBtn = document.createElement('button');
@@ -180,7 +200,7 @@ function renderScopeGroup(container, root) {
   clearBtn.className = 'memory-scope-btn memory-scope-btn--warn';
   clearBtn.textContent = 'clear';
   clearBtn.title = `grok memory clear --${root.scope}`;
-  clearBtn.addEventListener('click', () => clearScope(container, root.scope, clearBtn));
+  clearBtn.addEventListener('click', () => { void clearScope(container, root.scope, clearBtn); });
   actions.appendChild(clearBtn);
 
   head.appendChild(actions);
@@ -215,7 +235,7 @@ function renderScopeGroup(container, root) {
   return group;
 }
 
-function renderFileRow(container, rec) {
+function renderFileRow(container: HTMLElement, rec: MemoryFile): HTMLElement {
   const li = document.createElement('li');
   li.className = 'memory-file';
   if (selectedPath === rec.path) li.classList.add('memory-file--active');
@@ -246,18 +266,17 @@ function renderFileRow(container, rec) {
   btn.addEventListener('click', () => {
     selectedPath = rec.path;
     editing = false;
-    // Refresh selected state cheaply.
-    container.querySelectorAll('.memory-file').forEach(el => {
+    container.querySelectorAll<HTMLElement>('.memory-file').forEach(el => {
       el.classList.toggle('memory-file--active', el.dataset.path === selectedPath);
     });
-    renderViewer(container);
+    void renderViewer(container);
   });
 
   li.appendChild(btn);
   return li;
 }
 
-function applyFilter(files) {
+function applyFilter(files: MemoryFile[]): MemoryFile[] {
   if (!filterText.trim()) return files;
   const q = filterText.trim().toLowerCase();
   return files.filter(f => {
@@ -267,10 +286,8 @@ function applyFilter(files) {
   });
 }
 
-// ---------- viewer ----------
-
-async function renderViewer(container) {
-  const viewer = container.querySelector('[data-role="viewer"]');
+async function renderViewer(container: HTMLElement): Promise<void> {
+  const viewer = container.querySelector<HTMLElement>('[data-role="viewer"]');
   if (!viewer) return;
   viewer.replaceChildren();
   if (!selectedPath) {
@@ -289,7 +306,6 @@ async function renderViewer(container) {
     return;
   }
 
-  // Header.
   const head = document.createElement('header');
   head.className = 'memory-viewer-head';
   const title = document.createElement('div');
@@ -318,16 +334,15 @@ async function renderViewer(container) {
   if (!editing) {
     actions.appendChild(mkBtn('edit', '', () => {
       editing = true;
-      renderViewer(container);
+      void renderViewer(container);
     }));
     actions.appendChild(mkBtn('delete', 'memory-card-btn--warn', () => {
-      deleteFile(container, rec);
+      void deleteFile(container, rec);
     }));
   }
   head.appendChild(actions);
   viewer.appendChild(head);
 
-  // Body: either read-only pre or editable textarea.
   const body = document.createElement('div');
   body.className = 'memory-viewer-body';
   body.textContent = 'loading...';
@@ -335,7 +350,7 @@ async function renderViewer(container) {
 
   let content = '';
   try {
-    const r = await api.memory.read(rec.path);
+    const r = await api.memory.read(rec.path) as ReadResponse;
     if (aborted || activeContainer !== container) return;
     if (r && r.ok) content = r.content || '';
     else throw new Error((r && r.error) || 'read failed');
@@ -343,7 +358,7 @@ async function renderViewer(container) {
     body.textContent = '';
     const errEl = document.createElement('div');
     errEl.className = 'memory-viewer-err';
-    errEl.textContent = 'read failed: ' + err.message;
+    errEl.textContent = 'read failed: ' + (err instanceof Error ? err.message : String(err));
     body.appendChild(errEl);
     return;
   }
@@ -357,7 +372,6 @@ async function renderViewer(container) {
     return;
   }
 
-  // Edit mode.
   const ta = document.createElement('textarea');
   ta.className = 'memory-viewer-ta';
   ta.value = content;
@@ -375,24 +389,26 @@ async function renderViewer(container) {
   cancelBtn.type = 'button';
   cancelBtn.className = 'memory-card-btn';
   cancelBtn.textContent = 'cancel';
-  saveBtn.addEventListener('click', async () => {
-    saveBtn.disabled = true;
-    cancelBtn.disabled = true;
-    status.textContent = 'saving...';
-    try {
-      await api.memory.saveContent(rec.path, ta.value);
-      status.textContent = 'saved.';
-      editing = false;
-      await reload(container);
-    } catch (err) {
-      status.textContent = 'save failed: ' + err.message;
-      saveBtn.disabled = false;
-      cancelBtn.disabled = false;
-    }
+  saveBtn.addEventListener('click', () => {
+    void (async () => {
+      saveBtn.disabled = true;
+      cancelBtn.disabled = true;
+      status.textContent = 'saving...';
+      try {
+        await api.memory.saveContent(rec.path, ta.value);
+        status.textContent = 'saved.';
+        editing = false;
+        await reload(container);
+      } catch (err) {
+        status.textContent = 'save failed: ' + (err instanceof Error ? err.message : String(err));
+        saveBtn.disabled = false;
+        cancelBtn.disabled = false;
+      }
+    })();
   });
   cancelBtn.addEventListener('click', () => {
     editing = false;
-    renderViewer(container);
+    void renderViewer(container);
   });
   bar.appendChild(saveBtn);
   bar.appendChild(cancelBtn);
@@ -401,22 +417,19 @@ async function renderViewer(container) {
   body.appendChild(bar);
 }
 
-// ---------- actions ----------
-
-async function createFile(container, scope) {
+async function createFile(container: HTMLElement, scope: string): Promise<void> {
   const raw = window.prompt('new memory file name (kebab-case, .md optional):', '');
   if (!raw) return;
   const trimmed = raw.trim();
   if (!trimmed) return;
-  // Validate locally for nicer error messaging; backend validates again.
   const cleaned = trimmed.replace(/\s+/g, '-');
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*(\.md)?$/.test(cleaned)) {
     alert('invalid name. Use kebab-case (letters, digits, dot, dash, underscore).');
     return;
   }
   try {
-    const r = await api.memory.createFile(scope, cleaned, '');
-    if (r && r.ok) {
+    const r = await api.memory.createFile(scope, cleaned, '') as CreateResponse;
+    if (r && r.ok && r.path) {
       selectedPath = r.path;
       editing = true;
       await reload(container);
@@ -424,11 +437,11 @@ async function createFile(container, scope) {
       alert('create failed: ' + ((r && r.error) || 'unknown'));
     }
   } catch (err) {
-    alert('create failed: ' + err.message);
+    alert('create failed: ' + (err instanceof Error ? err.message : String(err)));
   }
 }
 
-async function deleteFile(container, rec) {
+async function deleteFile(container: HTMLElement, rec: MemoryFile): Promise<void> {
   if (!window.confirm(`Delete ${rec.name}? This cannot be undone.`)) return;
   try {
     await api.memory.deleteFile(rec.path);
@@ -438,11 +451,11 @@ async function deleteFile(container, rec) {
     }
     await reload(container);
   } catch (err) {
-    alert('delete failed: ' + err.message);
+    alert('delete failed: ' + (err instanceof Error ? err.message : String(err)));
   }
 }
 
-async function clearScope(container, scope, btn) {
+async function clearScope(container: HTMLElement, scope: string, btn: HTMLButtonElement): Promise<void> {
   const label = SCOPE_LABEL[scope] || scope;
   if (!window.confirm(`Clear ${label} memory? This cannot be undone.`)) return;
   clearError(container);
@@ -453,63 +466,61 @@ async function clearScope(container, scope, btn) {
     await api.memory.clear(scope);
     await reload(container);
   } catch (err) {
-    showError(container, err.message);
+    showError(container, err instanceof Error ? err.message : String(err));
   } finally {
     btn.disabled = false;
     btn.textContent = prev;
   }
 }
 
-// ---------- toolbar wiring ----------
-
-function wireToolbar(container) {
-  const search = container.querySelector('.memory-search');
+function wireToolbar(container: HTMLElement): void {
+  const search = container.querySelector<HTMLInputElement>('.memory-search');
   if (search) {
     search.addEventListener('input', () => {
       filterText = search.value || '';
       renderSidebar(container);
     });
   }
-  const refresh = container.querySelector('.memory-refresh-btn');
+  const refresh = container.querySelector<HTMLButtonElement>('.memory-refresh-btn');
   if (refresh) {
-    refresh.addEventListener('click', () => reload(container));
+    refresh.addEventListener('click', () => { void reload(container); });
   }
-  const allBtn = container.querySelector('.memory-clear-all-btn');
+  const allBtn = container.querySelector<HTMLButtonElement>('.memory-clear-all-btn');
   if (allBtn) {
-    allBtn.addEventListener('click', async () => {
-      if (allBtn.dataset.stage !== 'armed') {
-        allBtn.dataset.stage = 'armed';
-        allBtn.textContent = 'click again to confirm';
-        setTimeout(() => {
-          if (aborted) return;
-          if (allBtn.dataset.stage === 'armed') {
-            allBtn.dataset.stage = 'idle';
-            allBtn.textContent = 'clear all memory';
-          }
-        }, 4000);
-        return;
-      }
-      allBtn.dataset.stage = 'idle';
-      allBtn.textContent = 'clear all memory';
-      if (!window.confirm('Clear ALL memory (workspace + global)? This cannot be undone.')) return;
-      clearError(container);
-      allBtn.disabled = true;
-      try {
-        await api.memory.clear('all');
-        await reload(container);
-      } catch (err) {
-        showError(container, err.message);
-      } finally {
-        allBtn.disabled = false;
-      }
+    allBtn.addEventListener('click', () => {
+      void (async () => {
+        if (allBtn.dataset.stage !== 'armed') {
+          allBtn.dataset.stage = 'armed';
+          allBtn.textContent = 'click again to confirm';
+          setTimeout(() => {
+            if (aborted) return;
+            if (allBtn.dataset.stage === 'armed') {
+              allBtn.dataset.stage = 'idle';
+              allBtn.textContent = 'clear all memory';
+            }
+          }, 4000);
+          return;
+        }
+        allBtn.dataset.stage = 'idle';
+        allBtn.textContent = 'clear all memory';
+        if (!window.confirm('Clear ALL memory (workspace + global)? This cannot be undone.')) return;
+        clearError(container);
+        allBtn.disabled = true;
+        try {
+          await api.memory.clear('all');
+          await reload(container);
+        } catch (err) {
+          showError(container, err instanceof Error ? err.message : String(err));
+        } finally {
+          allBtn.disabled = false;
+        }
+      })();
     });
   }
 }
 
-// ---------- helpers ----------
-
-function findRecord(p) {
-  const roots = Array.isArray(cachedData && cachedData.roots) ? cachedData.roots : [];
+function findRecord(p: string): MemoryFile | null {
+  const roots = Array.isArray(cachedData && cachedData.roots) ? cachedData!.roots! : [];
   for (const r of roots) {
     for (const f of (r.files || [])) {
       if (f.path === p) return f;
@@ -518,7 +529,7 @@ function findRecord(p) {
   return null;
 }
 
-function mkBtn(label, cls, onclick) {
+function mkBtn(label: string, cls: string, onclick: () => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = `memory-card-btn ${cls || ''}`.trim();
@@ -527,7 +538,7 @@ function mkBtn(label, cls, onclick) {
   return b;
 }
 
-function metaRow(label, value) {
+function metaRow(label: string, value: string): DocumentFragment {
   const frag = document.createDocumentFragment();
   const dt = document.createElement('dt'); dt.textContent = label;
   const dd = document.createElement('dd'); dd.textContent = value;
@@ -535,7 +546,7 @@ function metaRow(label, value) {
   return frag;
 }
 
-function fmtBytes(n) {
+function fmtBytes(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
   let i = 0;
@@ -544,7 +555,7 @@ function fmtBytes(n) {
   return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
 }
 
-function fmtTime(iso) {
+function fmtTime(iso: string): string {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
@@ -554,7 +565,7 @@ function fmtTime(iso) {
   }
 }
 
-function shortenPath(p) {
+function shortenPath(p: string): string {
   if (!p) return '';
   const home = '/Users/dan';
   if (p.startsWith(home)) return '~' + p.slice(home.length);

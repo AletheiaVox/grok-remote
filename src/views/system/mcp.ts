@@ -1,27 +1,55 @@
 // MCP servers page. Lists configured MCP servers, lets you add/remove, and
 // run `grok mcp doctor` against one or all of them.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-let activeContainer = null;
-let state = {
-  loading: false,
-  loadError: null,
-  servers: [],
-  // per-card UI state, keyed by server name
-  cards: new Map(),
-  // selected transport in the add form
-  formType: 'stdio',
-  formError: null,
-  formBusy: false,
-  doctorAllBusy: false,
-  doctorAllResult: null,
-  doctorAllError: null,
-};
+interface McpServer {
+  name?: string;
+  id?: string;
+  key?: string;
+  type?: string;
+  transport?: string;
+  command?: string;
+  url?: string;
+  args?: unknown;
+  env?: unknown;
+  [k: string]: unknown;
+}
 
-export function mount(container) {
-  activeContainer = container;
-  state = {
+interface CardState {
+  doctorBusy: boolean;
+  doctorResult: unknown;
+  doctorError: string | null;
+  removing: boolean;
+}
+
+interface McpState {
+  loading: boolean;
+  loadError: string | null;
+  servers: McpServer[];
+  cards: Map<string, CardState>;
+  formType: 'stdio' | 'http' | 'sse';
+  formError: string | null;
+  formBusy: boolean;
+  doctorAllBusy: boolean;
+  doctorAllResult: unknown;
+  doctorAllError: string | null;
+}
+
+interface AddServerBody {
+  name: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  type?: string;
+}
+
+let activeContainer: HTMLElement | null = null;
+let state: McpState = freshState();
+
+function freshState(): McpState {
+  return {
     loading: false,
     loadError: null,
     servers: [],
@@ -33,18 +61,23 @@ export function mount(container) {
     doctorAllResult: null,
     doctorAllError: null,
   };
-  render();
-  refreshList();
 }
 
-export function unmount() {
+export function mount(container: HTMLElement): void {
+  activeContainer = container;
+  state = freshState();
+  render();
+  void refreshList();
+}
+
+export function unmount(): void {
   if (activeContainer) {
     activeContainer.replaceChildren();
     activeContainer = null;
   }
 }
 
-function render() {
+function render(): void {
   if (!activeContainer) return;
   activeContainer.replaceChildren();
   const root = document.createElement('section');
@@ -116,44 +149,46 @@ function render() {
   `;
   activeContainer.appendChild(root);
 
-  // Wire up header actions.
-  root.querySelector('[data-act="refresh"]').addEventListener('click', () => {
-    refreshList();
+  root.querySelector<HTMLButtonElement>('[data-act="refresh"]')?.addEventListener('click', () => {
+    void refreshList();
   });
-  root.querySelector('[data-act="doctor-all"]').addEventListener('click', () => {
-    runDoctorAll();
+  root.querySelector<HTMLButtonElement>('[data-act="doctor-all"]')?.addEventListener('click', () => {
+    void runDoctorAll();
   });
 
-  // Wire the add form.
-  const form = root.querySelector('[data-slot="form"]');
-  form.addEventListener('submit', (ev) => {
-    ev.preventDefault();
-    submitAddForm(form);
-  });
-  form.addEventListener('reset', () => {
-    state.formType = 'stdio';
-    state.formError = null;
-    queueMicrotask(() => syncFormVisibility(form));
-  });
-  form.addEventListener('change', (ev) => {
-    if (ev.target && ev.target.name === 'type') {
-      state.formType = ev.target.value;
-      syncFormVisibility(form);
-    }
-  });
-  syncFormVisibility(form);
+  const form = root.querySelector<HTMLFormElement>('[data-slot="form"]');
+  if (form) {
+    form.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      void submitAddForm(form);
+    });
+    form.addEventListener('reset', () => {
+      state.formType = 'stdio';
+      state.formError = null;
+      queueMicrotask(() => syncFormVisibility(form));
+    });
+    form.addEventListener('change', (ev) => {
+      const t = ev.target as HTMLInputElement | null;
+      if (t && t.name === 'type') {
+        const v = t.value;
+        state.formType = v === 'http' || v === 'sse' ? v : 'stdio';
+        syncFormVisibility(form);
+      }
+    });
+    syncFormVisibility(form);
+  }
 
   renderList();
   renderDoctorAll();
 }
 
-function syncFormVisibility(form) {
+function syncFormVisibility(form: HTMLFormElement): void {
   const isStdio = state.formType === 'stdio';
-  const stdio = form.querySelector('[data-slot="stdio-fields"]');
-  const urlBox = form.querySelector('[data-slot="url-fields"]');
+  const stdio = form.querySelector<HTMLElement>('[data-slot="stdio-fields"]');
+  const urlBox = form.querySelector<HTMLElement>('[data-slot="url-fields"]');
   if (stdio) stdio.hidden = !isStdio;
   if (urlBox) urlBox.hidden = isStdio;
-  const errSlot = form.querySelector('[data-slot="form-error"]');
+  const errSlot = form.querySelector<HTMLElement>('[data-slot="form-error"]');
   if (errSlot) {
     if (state.formError) {
       errSlot.textContent = state.formError;
@@ -163,16 +198,16 @@ function syncFormVisibility(form) {
       errSlot.hidden = true;
     }
   }
-  const submit = form.querySelector('[data-slot="submit"]');
+  const submit = form.querySelector<HTMLButtonElement>('[data-slot="submit"]');
   if (submit) {
     submit.disabled = state.formBusy;
     submit.textContent = state.formBusy ? 'adding...' : 'add';
   }
 }
 
-function renderList() {
+function renderList(): void {
   if (!activeContainer) return;
-  const slot = activeContainer.querySelector('[data-slot="list"]');
+  const slot = activeContainer.querySelector<HTMLElement>('[data-slot="list"]');
   if (!slot) return;
   slot.replaceChildren();
 
@@ -203,7 +238,7 @@ function renderList() {
   }
 }
 
-function buildCard(server) {
+function buildCard(server: McpServer): HTMLElement {
   const name = readServerName(server);
   const transport = readTransport(server);
   const target = readTarget(server);
@@ -254,7 +289,6 @@ function buildCard(server) {
     row.innerHTML = `<span class="mcp-row-label">env</span>`;
     const code = document.createElement('code');
     code.className = 'mcp-row-value';
-    // Don't print secret values. Just list the keys.
     code.textContent = Object.keys(env).join(', ');
     row.appendChild(code);
     body.appendChild(row);
@@ -267,13 +301,13 @@ function buildCard(server) {
   docBtn.className = 'mcp-btn';
   docBtn.textContent = cardState.doctorBusy ? 'checking...' : 'doctor';
   docBtn.disabled = cardState.doctorBusy;
-  docBtn.addEventListener('click', () => runDoctorOne(name));
+  docBtn.addEventListener('click', () => { void runDoctorOne(name); });
   const rmBtn = document.createElement('button');
   rmBtn.type = 'button';
   rmBtn.className = 'mcp-btn mcp-btn--danger';
   rmBtn.textContent = cardState.removing ? 'removing...' : 'remove';
   rmBtn.disabled = cardState.removing;
-  rmBtn.addEventListener('click', () => removeServer(name));
+  rmBtn.addEventListener('click', () => { void removeServer(name); });
   actions.appendChild(docBtn);
   actions.appendChild(rmBtn);
 
@@ -281,7 +315,6 @@ function buildCard(server) {
   card.appendChild(body);
   card.appendChild(actions);
 
-  // Doctor / error output panel below the card body.
   if (cardState.doctorResult || cardState.doctorError) {
     const out = document.createElement('pre');
     out.className = 'mcp-card-output';
@@ -297,7 +330,7 @@ function buildCard(server) {
   return card;
 }
 
-function ensureCardState(name) {
+function ensureCardState(name: string): CardState {
   let cs = state.cards.get(name);
   if (!cs) {
     cs = { doctorBusy: false, doctorResult: null, doctorError: null, removing: false };
@@ -306,37 +339,39 @@ function ensureCardState(name) {
   return cs;
 }
 
-function readServerName(server) {
+function readServerName(server: McpServer | unknown): string {
   if (!server || typeof server !== 'object') return String(server);
-  return server.name || server.id || server.key || '';
+  const s = server as McpServer;
+  return s.name || s.id || s.key || '';
 }
-function readTransport(server) {
+function readTransport(server: McpServer | unknown): string {
   if (!server || typeof server !== 'object') return '';
-  const t = server.type || server.transport;
+  const s = server as McpServer;
+  const t = s.type || s.transport;
   if (t) return String(t).toLowerCase();
-  if (server.command) return 'stdio';
-  if (server.url) {
-    return 'http';
-  }
+  if (s.command) return 'stdio';
+  if (s.url) return 'http';
   return '';
 }
-function readTarget(server) {
+function readTarget(server: McpServer | unknown): string {
   if (!server || typeof server !== 'object') return '';
-  if (server.command) return String(server.command);
-  if (server.url) return String(server.url);
+  const s = server as McpServer;
+  if (s.command) return String(s.command);
+  if (s.url) return String(s.url);
   return '';
 }
-function readArgs(server) {
+function readArgs(server: McpServer | unknown): string[] {
   if (!server || typeof server !== 'object') return [];
-  if (Array.isArray(server.args)) return server.args.map(String);
+  const s = server as McpServer;
+  if (Array.isArray(s.args)) return (s.args as unknown[]).map(String);
   return [];
 }
-function readEnv(server) {
+function readEnv(server: McpServer | unknown): Record<string, string> {
   if (!server || typeof server !== 'object') return {};
-  const e = server.env;
-  if (e && typeof e === 'object' && !Array.isArray(e)) return e;
+  const e = (server as McpServer).env;
+  if (e && typeof e === 'object' && !Array.isArray(e)) return e as Record<string, string>;
   if (Array.isArray(e)) {
-    const out = {};
+    const out: Record<string, string> = {};
     for (const pair of e) {
       if (typeof pair !== 'string') continue;
       const i = pair.indexOf('=');
@@ -348,24 +383,23 @@ function readEnv(server) {
   return {};
 }
 
-function formatJson(value) {
+function formatJson(value: unknown): string {
   try { return JSON.stringify(value, null, 2); }
   catch { return String(value); }
 }
 
-async function refreshList() {
+async function refreshList(): Promise<void> {
   state.loading = true;
   state.loadError = null;
   renderList();
   try {
-    const resp = await api.mcp.list();
-    state.servers = Array.isArray(resp?.servers) ? resp.servers : [];
+    const resp = await api.mcp.list() as { servers?: unknown } | undefined;
+    state.servers = Array.isArray(resp?.servers) ? (resp!.servers as McpServer[]) : [];
   } catch (err) {
-    state.loadError = err?.message || String(err);
+    state.loadError = err instanceof Error ? err.message : String(err);
     state.servers = [];
   } finally {
     state.loading = false;
-    // Drop stale per-card state for servers that are no longer present.
     const live = new Set(state.servers.map(readServerName));
     for (const k of Array.from(state.cards.keys())) {
       if (!live.has(k)) state.cards.delete(k);
@@ -374,7 +408,7 @@ async function refreshList() {
   }
 }
 
-async function submitAddForm(form) {
+async function submitAddForm(form: HTMLFormElement): Promise<void> {
   const fd = new FormData(form);
   const name = String(fd.get('name') || '').trim();
   const type = String(fd.get('type') || 'stdio');
@@ -388,7 +422,7 @@ async function submitAddForm(form) {
     syncFormVisibility(form);
     return;
   }
-  const body = { name };
+  const body: AddServerBody = { name };
   if (type === 'stdio') {
     if (!command) {
       state.formError = 'command is required for stdio transport';
@@ -398,7 +432,7 @@ async function submitAddForm(form) {
     body.command = command;
     const args = argsRaw.split('\n').map(s => s.trim()).filter(Boolean);
     if (args.length) body.args = args;
-    const env = {};
+    const env: Record<string, string> = {};
     for (const line of envRaw.split('\n')) {
       const t = line.trim();
       if (!t) continue;
@@ -422,74 +456,74 @@ async function submitAddForm(form) {
   syncFormVisibility(form);
 
   try {
-    const resp = await api.mcp.add(body);
-    if (Array.isArray(resp?.servers)) state.servers = resp.servers;
+    const resp = await api.mcp.add(body) as { servers?: unknown } | undefined;
+    if (Array.isArray(resp?.servers)) state.servers = resp!.servers as McpServer[];
     form.reset();
     state.formType = 'stdio';
     renderList();
   } catch (err) {
-    state.formError = err?.message || String(err);
+    state.formError = err instanceof Error ? err.message : String(err);
   } finally {
     state.formBusy = false;
     syncFormVisibility(form);
   }
 }
 
-async function removeServer(name) {
+async function removeServer(name: string): Promise<void> {
   if (!confirm(`Remove MCP server "${name}"?`)) return;
   const cs = ensureCardState(name);
   cs.removing = true;
   renderList();
   try {
-    const resp = await api.mcp.remove(name);
-    if (Array.isArray(resp?.servers)) state.servers = resp.servers;
+    const resp = await api.mcp.remove(name) as { servers?: unknown } | undefined;
+    if (Array.isArray(resp?.servers)) state.servers = resp!.servers as McpServer[];
   } catch (err) {
-    cs.doctorError = `remove failed: ${err?.message || String(err)}`;
+    cs.doctorError = `remove failed: ${err instanceof Error ? err.message : String(err)}`;
   } finally {
     cs.removing = false;
     renderList();
   }
 }
 
-async function runDoctorOne(name) {
+async function runDoctorOne(name: string): Promise<void> {
   const cs = ensureCardState(name);
   cs.doctorBusy = true;
   cs.doctorError = null;
   cs.doctorResult = null;
   renderList();
   try {
-    const resp = await api.mcp.doctor(name);
-    cs.doctorResult = resp?.result ?? resp;
+    const resp = await api.mcp.doctor(name) as { result?: unknown } | undefined;
+    cs.doctorResult = resp && 'result' in (resp as Record<string, unknown>) ? (resp as { result: unknown }).result : resp;
   } catch (err) {
-    cs.doctorError = err?.message || String(err);
+    cs.doctorError = err instanceof Error ? err.message : String(err);
   } finally {
     cs.doctorBusy = false;
     renderList();
   }
 }
 
-async function runDoctorAll() {
+async function runDoctorAll(): Promise<void> {
   state.doctorAllBusy = true;
   state.doctorAllError = null;
   state.doctorAllResult = null;
   renderDoctorAll();
   try {
-    const resp = await api.mcp.doctor();
-    state.doctorAllResult = resp?.result ?? resp;
+    const resp = await api.mcp.doctor() as { result?: unknown } | undefined;
+    state.doctorAllResult = resp && 'result' in (resp as Record<string, unknown>) ? (resp as { result: unknown }).result : resp;
   } catch (err) {
-    state.doctorAllError = err?.message || String(err);
+    state.doctorAllError = err instanceof Error ? err.message : String(err);
   } finally {
     state.doctorAllBusy = false;
     renderDoctorAll();
   }
 }
 
-function renderDoctorAll() {
+function renderDoctorAll(): void {
   if (!activeContainer) return;
-  const slot = activeContainer.querySelector('[data-slot="doctor-all"]');
+  const slot = activeContainer.querySelector<HTMLElement>('[data-slot="doctor-all"]');
   if (!slot) return;
   slot.replaceChildren();
-  const btn = activeContainer.querySelector('[data-act="doctor-all"]');
+  const btn = activeContainer.querySelector<HTMLButtonElement>('[data-act="doctor-all"]');
   if (btn) {
     btn.disabled = state.doctorAllBusy;
     btn.textContent = state.doctorAllBusy ? 'checking...' : 'doctor all';

@@ -4,51 +4,85 @@
 //   list  - filter / show / rm / gc the grok-managed git worktrees
 //   db    - inspect & rebuild the local index db
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-let activeContainer = null;
-let state = {
-  tab:        'list',      // 'list' | 'db'
-  loading:    false,
-  error:      null,
-  worktrees:  [],
-  filters:    { repo: '', type: '', all: false },
-  // id -> { showOpen, showText, showErr, rmConfirm, rmForce, rmDryRun, busy }
-  rows:       new Map(),
-  // gc form
-  gc: {
-    open: false, dryRun: false, maxAge: '', force: false,
-    output: null, error: null, busy: false,
-  },
-  db: {
-    statsText: null, statsErr: null,
-    pathText:  null, pathErr:  null,
-    rebuildText: null, rebuildErr: null,
-    busy: false,
-  },
-};
+interface Worktree {
+  id?: string;
+  worktree_id?: string;
+  path?: string;
+  repo?: string;
+  source_repo?: string;
+  source?: string;
+  branch?: string;
+  age?: string;
+  age_human?: string;
+  created_at?: string | number;
+  created?: string | number;
+  [k: string]: unknown;
+}
 
-export function mount(container) {
-  activeContainer = container;
-  state = {
+interface RowState {
+  showOpen: boolean;
+  showText: string | null;
+  showErr: string | null;
+  rmConfirm: boolean;
+  rmForce: boolean;
+  rmDryRun: boolean;
+  rmOutput: string | null;
+  rmErr: string | null;
+  busy: boolean;
+}
+
+interface Filters { repo: string; type: string; all: boolean }
+interface GcState {
+  open: boolean; dryRun: boolean; maxAge: string; force: boolean;
+  output: string | null; error: string | null; busy: boolean;
+}
+interface DbState {
+  statsText: string | null; statsErr: string | null;
+  pathText: string | null; pathErr: string | null;
+  rebuildText: string | null; rebuildErr: string | null;
+  busy: boolean;
+}
+interface WtState {
+  tab: 'list' | 'db';
+  loading: boolean;
+  error: string | null;
+  worktrees: Worktree[];
+  filters: Filters;
+  rows: Map<string, RowState>;
+  gc: GcState;
+  db: DbState;
+}
+
+let activeContainer: HTMLElement | null = null;
+let state: WtState = freshState();
+
+function freshState(): WtState {
+  return {
     tab: 'list', loading: false, error: null, worktrees: [],
     filters: { repo: '', type: '', all: false },
     rows: new Map(),
     gc: { open: false, dryRun: false, maxAge: '', force: false, output: null, error: null, busy: false },
     db: { statsText: null, statsErr: null, pathText: null, pathErr: null, rebuildText: null, rebuildErr: null, busy: false },
   };
-  render();
-  refresh();
 }
 
-export function unmount() {
+export function mount(container: HTMLElement): void {
+  activeContainer = container;
+  state = freshState();
+  render();
+  void refresh();
+}
+
+export function unmount(): void {
   if (activeContainer) {
     activeContainer.replaceChildren();
     activeContainer = null;
   }
 }
 
-function render() {
+function render(): void {
   if (!activeContainer) return;
   const c = activeContainer;
   c.innerHTML = `
@@ -65,21 +99,22 @@ function render() {
       <div class="worktrees-body" data-role="body"></div>
     </section>
   `;
-  for (const btn of c.querySelectorAll('.worktrees-tab')) {
+  for (const btn of c.querySelectorAll<HTMLButtonElement>('.worktrees-tab')) {
     btn.addEventListener('click', () => {
-      state.tab = btn.getAttribute('data-tab');
+      const t = btn.getAttribute('data-tab');
+      state.tab = (t === 'db' ? 'db' : 'list');
       renderBody();
     });
   }
   renderBody();
 }
 
-function renderBody() {
+function renderBody(): void {
   if (!activeContainer) return;
-  for (const btn of activeContainer.querySelectorAll('.worktrees-tab')) {
+  for (const btn of activeContainer.querySelectorAll<HTMLButtonElement>('.worktrees-tab')) {
     btn.classList.toggle('worktrees-tab--active', btn.getAttribute('data-tab') === state.tab);
   }
-  const body = activeContainer.querySelector('[data-role=body]');
+  const body = activeContainer.querySelector<HTMLElement>('[data-role=body]');
   if (!body) return;
   if (state.tab === 'list') {
     body.innerHTML = renderListTab();
@@ -90,9 +125,7 @@ function renderBody() {
   }
 }
 
-// ── list tab ────────────────────────────────────────────────────────────
-
-function renderListTab() {
+function renderListTab(): string {
   const f = state.filters;
   return `
     <div class="worktrees-filters">
@@ -117,13 +150,13 @@ function renderListTab() {
   `;
 }
 
-function renderStatusText() {
+function renderStatusText(): string {
   if (state.loading) return '<span class="worktrees-status--loading">loading...</span>';
   if (state.error)   return `<span class="worktrees-status--error">${escapeHtml(state.error)}</span>`;
   return '';
 }
 
-function renderTable() {
+function renderTable(): string {
   if (!state.worktrees.length && !state.loading) {
     return `<div class="worktrees-empty">No worktrees.</div>`;
   }
@@ -137,7 +170,7 @@ function renderTable() {
   `;
 }
 
-function renderWtRow(wt) {
+function renderWtRow(wt: Worktree): string {
   const id = String(wt.id ?? wt.worktree_id ?? wt.path ?? '');
   const r  = getRow(id);
   const open = r.showOpen || r.rmConfirm;
@@ -157,7 +190,7 @@ function renderWtRow(wt) {
     </tr>
   `;
   if (!open) return main;
-  const sections = [];
+  const sections: string[] = [];
   if (r.showOpen) sections.push(renderShowSection(r));
   if (r.rmConfirm) sections.push(renderRmSection(id, r));
   return main + `
@@ -167,7 +200,7 @@ function renderWtRow(wt) {
   `;
 }
 
-function renderShowSection(r) {
+function renderShowSection(r: RowState): string {
   if (r.showErr) {
     return `<div class="worktrees-detail-section">
       <div class="worktrees-detail-title">show</div>
@@ -186,7 +219,7 @@ function renderShowSection(r) {
   </div>`;
 }
 
-function renderRmSection(id, r) {
+function renderRmSection(_id: string, r: RowState): string {
   return `<div class="worktrees-detail-section">
     <div class="worktrees-detail-title">remove worktree</div>
     <div class="worktrees-rm-row">
@@ -207,7 +240,7 @@ function renderRmSection(id, r) {
   </div>`;
 }
 
-function renderGcForm() {
+function renderGcForm(): string {
   const g = state.gc;
   return `
     <div class="worktrees-gc">
@@ -235,59 +268,64 @@ function renderGcForm() {
   `;
 }
 
-function bindListTab(root) {
-  root.querySelector('[data-act=refresh]')?.addEventListener('click', refresh);
-  root.querySelector('[data-act=toggle-gc]')?.addEventListener('click', () => {
+function bindListTab(root: HTMLElement): void {
+  root.querySelector<HTMLButtonElement>('[data-act=refresh]')?.addEventListener('click', () => { void refresh(); });
+  root.querySelector<HTMLButtonElement>('[data-act=toggle-gc]')?.addEventListener('click', () => {
     state.gc.open = !state.gc.open;
     renderBody();
   });
-  for (const inp of root.querySelectorAll('[data-filter]')) {
+  for (const inp of root.querySelectorAll<HTMLInputElement>('[data-filter]')) {
     inp.addEventListener('change', () => {
-      const k = inp.getAttribute('data-filter');
-      if (inp.type === 'checkbox') state.filters[k] = inp.checked;
-      else state.filters[k] = inp.value;
+      const k = inp.getAttribute('data-filter') as keyof Filters | null;
+      if (!k) return;
+      if (inp.type === 'checkbox') (state.filters as Record<string, unknown>)[k] = inp.checked;
+      else (state.filters as Record<string, unknown>)[k] = inp.value;
     });
     inp.addEventListener('input', () => {
-      const k = inp.getAttribute('data-filter');
-      if (inp.type !== 'checkbox') state.filters[k] = inp.value;
+      const k = inp.getAttribute('data-filter') as keyof Filters | null;
+      if (!k) return;
+      if (inp.type !== 'checkbox') (state.filters as Record<string, unknown>)[k] = inp.value;
     });
   }
 
-  for (const inp of root.querySelectorAll('[data-gc-input]')) {
+  for (const inp of root.querySelectorAll<HTMLInputElement>('[data-gc-input]')) {
     inp.addEventListener('change', () => {
       const k = inp.getAttribute('data-gc-input');
-      if (inp.type === 'checkbox') state.gc[k] = inp.checked;
-      else state.gc[k] = inp.value;
+      if (!k) return;
+      if (inp.type === 'checkbox') (state.gc as Record<string, unknown>)[k] = inp.checked;
+      else (state.gc as Record<string, unknown>)[k] = inp.value;
     });
     inp.addEventListener('input', () => {
       const k = inp.getAttribute('data-gc-input');
-      if (inp.type !== 'checkbox') state.gc[k] = inp.value;
+      if (!k) return;
+      if (inp.type !== 'checkbox') (state.gc as Record<string, unknown>)[k] = inp.value;
     });
   }
-  root.querySelector('[data-act=gc-run]')?.addEventListener('click', runGc);
+  root.querySelector<HTMLButtonElement>('[data-act=gc-run]')?.addEventListener('click', () => { void runGc(); });
 
   for (const wt of state.worktrees) {
     const id = String(wt.id ?? wt.worktree_id ?? wt.path ?? '');
-    const row = root.querySelector(`tr[data-id="${cssEscape(id)}"]`);
+    const row = root.querySelector<HTMLElement>(`tr[data-id="${cssEscape(id)}"]`);
     if (!row) continue;
-    row.querySelector('[data-act=show]')?.addEventListener('click', () => toggleShow(id));
-    row.querySelector('[data-act=rm]')?.addEventListener('click', () => toggleRm(id));
-    const detail = root.querySelector(`tr[data-detail-for="${cssEscape(id)}"]`);
+    row.querySelector<HTMLButtonElement>('[data-act=show]')?.addEventListener('click', () => { void toggleShow(id); });
+    row.querySelector<HTMLButtonElement>('[data-act=rm]')?.addEventListener('click', () => toggleRm(id));
+    const detail = root.querySelector<HTMLElement>(`tr[data-detail-for="${cssEscape(id)}"]`);
     if (!detail) continue;
-    detail.querySelector('[data-act=rm-confirm]')?.addEventListener('click', () => doRm(id));
-    for (const inp of detail.querySelectorAll('[data-rm-input]')) {
+    detail.querySelector<HTMLButtonElement>('[data-act=rm-confirm]')?.addEventListener('click', () => { void doRm(id); });
+    for (const inp of detail.querySelectorAll<HTMLInputElement>('[data-rm-input]')) {
       inp.addEventListener('change', () => {
         const k = inp.getAttribute('data-rm-input');
         const r = getRow(id);
-        if (inp.type === 'checkbox') r[k === 'force' ? 'rmForce' : 'rmDryRun'] = inp.checked;
+        if (inp.type === 'checkbox') {
+          if (k === 'force') r.rmForce = inp.checked;
+          else if (k === 'dryRun') r.rmDryRun = inp.checked;
+        }
       });
     }
   }
 }
 
-// ── db tab ──────────────────────────────────────────────────────────────
-
-function renderDbTab() {
+function renderDbTab(): string {
   const d = state.db;
   return `
     <div class="worktrees-db">
@@ -306,15 +344,13 @@ function renderDbTab() {
   `;
 }
 
-function bindDbTab(root) {
-  root.querySelector('[data-act=db-stats]')?.addEventListener('click', doDbStats);
-  root.querySelector('[data-act=db-path]')?.addEventListener('click', doDbPath);
-  root.querySelector('[data-act=db-rebuild]')?.addEventListener('click', doDbRebuild);
+function bindDbTab(root: HTMLElement): void {
+  root.querySelector<HTMLButtonElement>('[data-act=db-stats]')?.addEventListener('click', () => { void doDbStats(); });
+  root.querySelector<HTMLButtonElement>('[data-act=db-path]')?.addEventListener('click', () => { void doDbPath(); });
+  root.querySelector<HTMLButtonElement>('[data-act=db-rebuild]')?.addEventListener('click', () => { void doDbRebuild(); });
 }
 
-// ── actions ─────────────────────────────────────────────────────────────
-
-async function refresh() {
+async function refresh(): Promise<void> {
   state.loading = true;
   state.error = null;
   renderBody();
@@ -324,11 +360,13 @@ async function refresh() {
       repo: state.filters.repo.trim(),
       type: state.filters.type.trim(),
     };
-    const resp = await api.worktrees.list(opts);
-    const data = (resp && 'data' in resp) ? resp.data : resp;
+    const resp = await api.worktrees.list(opts) as unknown;
+    const data = (resp && typeof resp === 'object' && 'data' in (resp as Record<string, unknown>))
+      ? (resp as Record<string, unknown>).data
+      : resp;
     state.worktrees = normalizeWorktrees(data);
   } catch (err) {
-    state.error = err.message || String(err);
+    state.error = err instanceof Error ? err.message : String(err);
     state.worktrees = [];
   } finally {
     state.loading = false;
@@ -336,22 +374,24 @@ async function refresh() {
   }
 }
 
-async function toggleShow(id) {
+async function toggleShow(id: string): Promise<void> {
   const r = getRow(id);
   r.showOpen = !r.showOpen;
   renderBody();
   if (r.showOpen && r.showText == null && !r.showErr) {
     try {
-      const resp = await api.worktrees.show(id);
-      r.showText = (resp && resp.output) || (typeof resp === 'string' ? resp : JSON.stringify(resp, null, 2));
+      const resp = await api.worktrees.show(id) as { output?: string } | string | undefined;
+      if (typeof resp === 'string') r.showText = resp;
+      else if (resp && typeof resp === 'object' && typeof resp.output === 'string') r.showText = resp.output;
+      else r.showText = JSON.stringify(resp, null, 2);
     } catch (err) {
-      r.showErr = err.message || String(err);
+      r.showErr = err instanceof Error ? err.message : String(err);
     }
     renderBody();
   }
 }
 
-function toggleRm(id) {
+function toggleRm(id: string): void {
   const r = getRow(id);
   r.rmConfirm = !r.rmConfirm;
   if (!r.rmConfirm) {
@@ -361,28 +401,27 @@ function toggleRm(id) {
   renderBody();
 }
 
-async function doRm(id) {
+async function doRm(id: string): Promise<void> {
   const r = getRow(id);
   r.busy = true;
   r.rmErr = null;
   r.rmOutput = null;
   renderBody();
   try {
-    const resp = await api.worktrees.rm(id, { force: r.rmForce, dryRun: r.rmDryRun });
+    const resp = await api.worktrees.rm(id, { force: r.rmForce, dryRun: r.rmDryRun }) as { output?: string } | undefined;
     r.rmOutput = (resp && resp.output) || JSON.stringify(resp, null, 2);
   } catch (err) {
-    r.rmErr = err.message || String(err);
+    r.rmErr = err instanceof Error ? err.message : String(err);
   } finally {
     r.busy = false;
   }
   renderBody();
   if (!r.rmErr && !r.rmDryRun) {
-    // Removed for real - refresh the list.
-    setTimeout(refresh, 250);
+    setTimeout(() => { void refresh(); }, 250);
   }
 }
 
-async function runGc() {
+async function runGc(): Promise<void> {
   const g = state.gc;
   if (!confirm(`Run grok worktree gc${g.dryRun ? ' (dry run)' : ''}?`)) return;
   g.busy = true;
@@ -390,76 +429,74 @@ async function runGc() {
   g.output = null;
   renderBody();
   try {
-    const body = {};
+    const body: { dryRun?: boolean; force?: boolean; maxAge?: string } = {};
     if (g.dryRun) body.dryRun = true;
     if (g.force)  body.force = true;
     if (g.maxAge && g.maxAge.trim()) body.maxAge = g.maxAge.trim();
-    const resp = await api.worktrees.gc(body);
+    const resp = await api.worktrees.gc(body) as { output?: string } | undefined;
     g.output = (resp && resp.output) || JSON.stringify(resp, null, 2);
   } catch (err) {
-    g.error = err.message || String(err);
+    g.error = err instanceof Error ? err.message : String(err);
   } finally {
     g.busy = false;
   }
   renderBody();
-  if (!g.error && !g.dryRun) setTimeout(refresh, 250);
+  if (!g.error && !g.dryRun) setTimeout(() => { void refresh(); }, 250);
 }
 
-async function doDbStats() {
+async function doDbStats(): Promise<void> {
   state.db.busy = true;
   state.db.statsErr = null;
   state.db.statsText = 'loading...';
   renderBody();
   try {
-    const resp = await api.worktrees.dbStats();
+    const resp = await api.worktrees.dbStats() as { output?: string } | undefined;
     state.db.statsText = (resp && resp.output) || JSON.stringify(resp, null, 2);
   } catch (err) {
     state.db.statsText = null;
-    state.db.statsErr = err.message || String(err);
+    state.db.statsErr = err instanceof Error ? err.message : String(err);
   } finally {
     state.db.busy = false;
   }
   renderBody();
 }
 
-async function doDbPath() {
+async function doDbPath(): Promise<void> {
   state.db.busy = true;
   state.db.pathErr = null;
   state.db.pathText = 'loading...';
   renderBody();
   try {
-    const resp = await api.worktrees.dbPath();
+    const resp = await api.worktrees.dbPath() as { output?: string } | undefined;
     state.db.pathText = (resp && resp.output) || JSON.stringify(resp, null, 2);
   } catch (err) {
     state.db.pathText = null;
-    state.db.pathErr = err.message || String(err);
+    state.db.pathErr = err instanceof Error ? err.message : String(err);
   } finally {
     state.db.busy = false;
   }
   renderBody();
 }
 
-async function doDbRebuild() {
+async function doDbRebuild(): Promise<void> {
   if (!confirm('Rebuild the worktree index by scanning the filesystem?')) return;
   state.db.busy = true;
   state.db.rebuildErr = null;
   state.db.rebuildText = 'running...';
   renderBody();
   try {
-    const resp = await api.worktrees.dbRebuild();
+    const resp = await api.worktrees.dbRebuild() as { output?: string } | undefined;
     state.db.rebuildText = (resp && resp.output) || JSON.stringify(resp, null, 2);
   } catch (err) {
     state.db.rebuildText = null;
-    state.db.rebuildErr = err.message || String(err);
+    state.db.rebuildErr = err instanceof Error ? err.message : String(err);
   } finally {
     state.db.busy = false;
   }
   renderBody();
 }
 
-// ── helpers ─────────────────────────────────────────────────────────────
-
-function getRow(id) {
+function getRow(id: string): RowState {
   let r = state.rows.get(id);
   if (!r) {
     r = {
@@ -472,16 +509,19 @@ function getRow(id) {
   return r;
 }
 
-function normalizeWorktrees(data) {
+function normalizeWorktrees(data: unknown): Worktree[] {
   if (!data) return [];
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data.worktrees)) return data.worktrees;
-  if (Array.isArray(data.rows)) return data.rows;
-  if (Array.isArray(data.data)) return data.data;
+  if (Array.isArray(data)) return data as Worktree[];
+  if (typeof data === 'object') {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.worktrees)) return d.worktrees as Worktree[];
+    if (Array.isArray(d.rows)) return d.rows as Worktree[];
+    if (Array.isArray(d.data)) return d.data as Worktree[];
+  }
   return [];
 }
 
-function formatAge(when) {
+function formatAge(when: string | number | undefined): string {
   if (!when) return '';
   const t = typeof when === 'number' ? when : Date.parse(when);
   if (!Number.isFinite(t)) return String(when);
@@ -492,12 +532,12 @@ function formatAge(when) {
   return `${Math.floor(secs / 86400)}d`;
 }
 
-function truncate(s, n) {
+function truncate(s: unknown, n: number): string {
   const str = String(s || '');
   return str.length > n ? str.slice(0, n - 1) + '...' : str;
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: unknown): string {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -506,6 +546,6 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-function cssEscape(s) {
+function cssEscape(s: string): string {
   return String(s).replace(/["\\]/g, '\\$&');
 }

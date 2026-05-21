@@ -162,14 +162,14 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | src/views/system/leaders.js           | src/views/system/leaders.ts              |
 | [x]    | src/views/system/lsp.js               | src/views/system/lsp.ts                  |
 | [x]    | src/views/system/marketplaces.js      | src/views/system/marketplaces.ts         |
-| [ ]    | src/views/system/mcp.js               | src/views/system/mcp.ts                  |
-| [ ]    | src/views/system/memory.js            | src/views/system/memory.ts               |
+| [x]    | src/views/system/mcp.js               | src/views/system/mcp.ts                  |
+| [x]    | src/views/system/memory.js            | src/views/system/memory.ts               |
 | [x]    | src/views/system/models.js            | src/views/system/models.ts               |
 | [x]    | src/views/system/plugins.js           | src/views/system/plugins.ts              |
 | [x]    | src/views/system/sessions.js          | src/views/system/sessions.ts             |
 | [x]    | src/views/system/setup.js             | src/views/system/setup.ts                |
 | [x]    | src/views/system/skills.js            | src/views/system/skills.ts               |
-| [ ]    | src/views/system/worktrees.js         | src/views/system/worktrees.ts            |
+| [x]    | src/views/system/worktrees.js         | src/views/system/worktrees.ts            |
 | [x]    | src/views/system/flow.js              | src/views/system/flow.ts                 |
 | [ ]    | src/views/system/flow.jsx             | src/views/system/flow.tsx                |
 | [ ]    | src/views/system/flow-floating-edge.jsx | src/views/system/flow-floating-edge.tsx |
