@@ -1,32 +1,54 @@
-// Import page. Owned by its sub-agent.
-//
-// Wraps `grok import`:
-//   - GET  /api/system/import         -> "available to import" list
-//   - POST /api/system/import {tgts}  -> import selected + pasted paths
-//
-// Layout:
-//   1. "available" list with a checkbox per row.
-//   2. free-form textarea for .jsonl paths (one per line).
-//   3. submit button that combines both into the targets argv.
-//   4. result panel below with one row per NDJSON event.
+// Import page.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-let activeContainer = null;
-let state = {
-  loadingList: false,
-  listError: null,
-  available: [],
-  selected: new Set(),
-  pasteText: '',
-  submitting: false,
-  submitError: null,
-  events: [],
-};
+interface AvailableRecord {
+  sessionId?: string;
+  session_id?: string;
+  id?: string;
+  sid?: string;
+  uuid?: string;
+  summary?: string;
+  label?: string;
+  title?: string;
+  first_prompt?: string;
+  firstPrompt?: string;
+  [k: string]: unknown;
+}
 
-export function mount(container) {
-  activeContainer = container;
-  state = {
+interface ImportEvent {
+  event?: string;
+  status?: string;
+  kind?: string;
+  sessionId?: string;
+  session_id?: string;
+  id?: string;
+  sid?: string;
+  path?: string;
+  target?: string;
+  file?: string;
+  message?: string;
+  reason?: string;
+  detail?: string;
+  error?: string;
+}
+
+interface ImportState {
+  loadingList: boolean;
+  listError: string | null;
+  available: AvailableRecord[];
+  selected: Set<string>;
+  pasteText: string;
+  submitting: boolean;
+  submitError: string | null;
+  events: ImportEvent[];
+}
+
+let activeContainer: HTMLElement | null = null;
+let state: ImportState = freshState();
+
+function freshState(): ImportState {
+  return {
     loadingList: false,
     listError: null,
     available: [],
@@ -36,26 +58,31 @@ export function mount(container) {
     submitError: null,
     events: [],
   };
-  render();
-  loadList();
 }
 
-export function unmount() {
+export function mount(container: HTMLElement): void {
+  activeContainer = container;
+  state = freshState();
+  render();
+  void loadList();
+}
+
+export function unmount(): void {
   if (activeContainer) {
     activeContainer.replaceChildren();
     activeContainer = null;
   }
 }
 
-async function loadList() {
+async function loadList(): Promise<void> {
   state.loadingList = true;
   state.listError = null;
   render();
   try {
-    const data = await api.importer.list();
+    const data = await api.importer.list() as { available?: AvailableRecord[] };
     state.available = Array.isArray(data?.available) ? data.available : [];
   } catch (err) {
-    state.listError = err?.message || String(err);
+    state.listError = err instanceof Error ? err.message : String(err);
     state.available = [];
   } finally {
     state.loadingList = false;
@@ -63,19 +90,18 @@ async function loadList() {
   }
 }
 
-function collectTargets() {
-  const targets = [];
+function collectTargets(): string[] {
+  const targets: string[] = [];
   for (const sid of state.selected) {
     if (typeof sid === 'string' && sid.trim()) targets.push(sid.trim());
   }
   const pasted = (state.pasteText || '')
     .split('\n')
-    .map(s => s.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
   for (const p of pasted) targets.push(p);
-  // De-dupe while preserving order.
-  const seen = new Set();
-  const out = [];
+  const seen = new Set<string>();
+  const out: string[] = [];
   for (const t of targets) {
     if (seen.has(t)) continue;
     seen.add(t);
@@ -84,7 +110,7 @@ function collectTargets() {
   return out;
 }
 
-async function submit() {
+async function submit(): Promise<void> {
   if (state.submitting) return;
   state.submitting = true;
   state.submitError = null;
@@ -92,10 +118,10 @@ async function submit() {
   render();
   const targets = collectTargets();
   try {
-    const data = await api.importer.run(targets);
+    const data = await api.importer.run(targets) as { events?: ImportEvent[] };
     state.events = Array.isArray(data?.events) ? data.events : [];
   } catch (err) {
-    state.submitError = err?.message || String(err);
+    state.submitError = err instanceof Error ? err.message : String(err);
     state.events = [];
   } finally {
     state.submitting = false;
@@ -103,7 +129,7 @@ async function submit() {
   }
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: unknown): string {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -112,20 +138,18 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-function shortId(v) {
+function shortId(v: unknown): string {
   const s = String(v == null ? '' : v);
   if (s.length <= 18) return s;
   return `${s.slice(0, 8)}...${s.slice(-4)}`;
 }
 
-// Pull a session-id-looking field out of an available-record. We don't
-// know the exact JSON shape grok emits (the CLI may evolve); try the
-// most likely keys, then fall back to the first string field.
-function pickId(rec) {
+function pickId(rec: AvailableRecord | null | undefined): string {
   if (!rec || typeof rec !== 'object') return '';
-  const keys = ['sessionId', 'session_id', 'id', 'sid', 'uuid'];
+  const keys = ['sessionId', 'session_id', 'id', 'sid', 'uuid'] as const;
   for (const k of keys) {
-    if (typeof rec[k] === 'string' && rec[k]) return rec[k];
+    const v = rec[k];
+    if (typeof v === 'string' && v) return v;
   }
   for (const v of Object.values(rec)) {
     if (typeof v === 'string' && /^[0-9a-f-]{8,}$/i.test(v)) return v;
@@ -133,16 +157,17 @@ function pickId(rec) {
   return '';
 }
 
-function pickSummary(rec) {
+function pickSummary(rec: AvailableRecord | null | undefined): string {
   if (!rec || typeof rec !== 'object') return '';
-  const keys = ['summary', 'label', 'title', 'first_prompt', 'firstPrompt'];
+  const keys = ['summary', 'label', 'title', 'first_prompt', 'firstPrompt'] as const;
   for (const k of keys) {
-    if (typeof rec[k] === 'string' && rec[k]) return rec[k];
+    const v = rec[k];
+    if (typeof v === 'string' && v) return v;
   }
   return '';
 }
 
-function pickEventStatus(ev) {
+function pickEventStatus(ev: ImportEvent | null | undefined): string {
   if (!ev || typeof ev !== 'object') return 'unknown';
   if (typeof ev.event === 'string')  return ev.event;
   if (typeof ev.status === 'string') return ev.status;
@@ -150,25 +175,27 @@ function pickEventStatus(ev) {
   return 'event';
 }
 
-function pickEventTarget(ev) {
+function pickEventTarget(ev: ImportEvent | null | undefined): string {
   if (!ev || typeof ev !== 'object') return '';
-  const keys = ['sessionId', 'session_id', 'id', 'sid', 'path', 'target', 'file'];
+  const keys = ['sessionId', 'session_id', 'id', 'sid', 'path', 'target', 'file'] as const;
   for (const k of keys) {
-    if (typeof ev[k] === 'string' && ev[k]) return ev[k];
+    const v = ev[k];
+    if (typeof v === 'string' && v) return v;
   }
   return '';
 }
 
-function pickEventMessage(ev) {
+function pickEventMessage(ev: ImportEvent | null | undefined): string {
   if (!ev || typeof ev !== 'object') return '';
-  const keys = ['message', 'reason', 'detail', 'error'];
+  const keys = ['message', 'reason', 'detail', 'error'] as const;
   for (const k of keys) {
-    if (typeof ev[k] === 'string' && ev[k]) return ev[k];
+    const v = ev[k];
+    if (typeof v === 'string' && v) return v;
   }
   return '';
 }
 
-function render() {
+function render(): void {
   if (!activeContainer) return;
 
   const availableRowsHtml = state.available.length
@@ -262,35 +289,32 @@ function render() {
   wire();
 }
 
-function wire() {
+function wire(): void {
   if (!activeContainer) return;
 
-  const reloadBtn = activeContainer.querySelector('.importer-reload');
-  if (reloadBtn) reloadBtn.addEventListener('click', () => loadList());
+  const reloadBtn = activeContainer.querySelector('.importer-reload') as HTMLButtonElement | null;
+  if (reloadBtn) reloadBtn.addEventListener('click', () => void loadList());
 
   const checks = activeContainer.querySelectorAll('.import-check');
   checks.forEach((cb) => {
-    cb.addEventListener('change', (e) => {
+    cb.addEventListener('change', (e: Event) => {
       const sid = cb.getAttribute('data-sid') || '';
       if (!sid) return;
-      if (e.target.checked) state.selected.add(sid);
+      if ((e.target as HTMLInputElement).checked) state.selected.add(sid);
       else state.selected.delete(sid);
-      // Re-render to update the submit button counter.
       render();
     });
   });
 
-  const paste = activeContainer.querySelector('#importer-paste');
+  const paste = activeContainer.querySelector('#importer-paste') as HTMLTextAreaElement | null;
   if (paste) {
-    paste.addEventListener('input', (e) => {
-      state.pasteText = e.target.value;
-      // Only re-render the bottom hint; avoid stealing focus by skipping
-      // a full render. We update just the counter and hint manually.
-      const submitBtn = activeContainer.querySelector('.importer-submit');
-      const hint      = activeContainer.querySelector('.importer-targets-hint');
+    paste.addEventListener('input', (e: Event) => {
+      state.pasteText = (e.target as HTMLTextAreaElement).value;
+      const submitBtn2 = activeContainer!.querySelector('.importer-submit') as HTMLButtonElement | null;
+      const hint      = activeContainer!.querySelector('.importer-targets-hint') as HTMLElement | null;
       const targets   = collectTargets();
-      if (submitBtn && !state.submitting) {
-        submitBtn.textContent = targets.length ? `import selected (${targets.length})` : 'import all available';
+      if (submitBtn2 && !state.submitting) {
+        submitBtn2.textContent = targets.length ? `import selected (${targets.length})` : 'import all available';
       }
       if (hint) {
         hint.textContent = targets.length
@@ -300,6 +324,6 @@ function wire() {
     });
   }
 
-  const submitBtn = activeContainer.querySelector('.importer-submit');
-  if (submitBtn) submitBtn.addEventListener('click', () => submit());
+  const submitBtn = activeContainer.querySelector('.importer-submit') as HTMLButtonElement | null;
+  if (submitBtn) submitBtn.addEventListener('click', () => void submit());
 }

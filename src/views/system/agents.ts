@@ -1,27 +1,32 @@
 // Subagents page.
-//
-// Lists every subagent grok knows about: built-in ones (read-only,
-// shipped with the binary), user-scoped (~/.grok/agents/*.md), and
-// workspace-scoped (<cwd>/.grok/agents/*.md). Built-ins show the
-// description only; user / workspace agents can be opened, edited
-// in-place, and deleted. A "+ new" button creates a stub .md under the
-// chosen scope and drops the user straight into edit mode.
-//
-// IMPORTANT: this page deals with grok's *subagent profiles*. The
-// "agents" you see in the home view are running *conversations*; that
-// view lives in src/views/agents.js.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 import {
   loadInspect, buildPageShell, setStatusLine, clearBody,
   addConfigFilesBanner,
   buildGroup, emptyState, buildFooterHint,
   shortenPath, scopeLabel, safeStringify,
-} from './_native_common';
+  type ConfigFile,
+} from './_native_common.js';
 
-let activeContainer = null;
+interface AgentSource { type?: string; path?: string; plugin_name?: string }
+interface AgentRecord {
+  name?: string;
+  description?: string;
+  model?: string;
+  tools?: unknown[];
+  source?: AgentSource;
+  [k: string]: unknown;
+}
+
+interface InspectShape {
+  agents?: AgentRecord[];
+  cwd?: string;
+}
+
+let activeContainer: HTMLElement | null = null;
 let aborted = false;
-let cachedInspect = null;
+let cachedInspect: unknown = null;
 
 const BLURB = `
   Subagents are named worker profiles you can spawn from inside a
@@ -33,14 +38,14 @@ const BLURB = `
   parent's session.
 `;
 
-export async function mount(container) {
+export async function mount(container: HTMLElement): Promise<void> {
   activeContainer = container;
   aborted = false;
   const section = buildPageShell(container, { title: 'Subagents', blurb: BLURB });
   await reload(section);
 }
 
-export function unmount() {
+export function unmount(): void {
   aborted = true;
   if (activeContainer) {
     activeContainer.replaceChildren();
@@ -49,49 +54,44 @@ export function unmount() {
   cachedInspect = null;
 }
 
-async function reload(section) {
+async function reload(section: HTMLElement): Promise<void> {
   const { inspect, error } = await loadInspect();
   if (aborted) return;
   if (error) { setStatusLine(section, 'failed to load: ' + error); return; }
   cachedInspect = inspect;
 
-  const agents = Array.isArray(inspect && inspect.agents) ? inspect.agents : [];
-  // Canonical roots where subagent .md files live. We can derive them from
-  // any user/project agent path; fall back to the standard locations.
-  const userRoot = agents.find(a => a.source?.type === 'user' && a.source?.path)?.source?.path?.replace(/\/[^/]+\.md$/, '');
-  const projRoot = agents.find(a => (a.source?.type === 'project' || a.source?.type === 'cwd' || a.source?.type === 'workspace') && a.source?.path)?.source?.path?.replace(/\/[^/]+\.md$/, '');
-  const cwd = inspect && inspect.cwd;
-  addConfigFilesBanner(section, [
+  const data = (inspect && typeof inspect === 'object') ? inspect as InspectShape : {};
+  const agents = Array.isArray(data.agents) ? data.agents : [];
+  const userRoot = agents.find((a) => a.source?.type === 'user' && a.source?.path)?.source?.path?.replace(/\/[^/]+\.md$/, '');
+  const projRoot = agents.find((a) => (a.source?.type === 'project' || a.source?.type === 'cwd' || a.source?.type === 'workspace') && a.source?.path)?.source?.path?.replace(/\/[^/]+\.md$/, '');
+  const cwd = data.cwd;
+  const banner: ConfigFile[] = [
     { label: 'user agents', path: userRoot || '~/.grok/agents' },
-    cwd && { label: 'project agents', path: projRoot || `${cwd}/.grok/agents` },
-  ].filter(Boolean));
+    ...(cwd ? [{ label: 'project agents', path: projRoot || `${cwd}/.grok/agents` }] : []),
+  ];
+  addConfigFilesBanner(section, banner);
   clearBody(section);
 
-  // Toolbar: "new" buttons for the writable scopes.
   const toolbar = document.createElement('div');
   toolbar.style.display = 'flex';
   toolbar.style.gap = '8px';
   toolbar.style.alignItems = 'center';
-  toolbar.appendChild(mkPrimaryButton('+ new (user)', async () => createAgent('user', section)));
-  toolbar.appendChild(mkPrimaryButton('+ new (workspace)', async () => createAgent('workspace', section)));
-  const refresh = mkSecondaryButton('refresh', () => reload(section));
-  toolbar.appendChild(refresh);
+  toolbar.appendChild(mkPrimaryButton('+ new (user)', () => void createAgent('user', section)));
+  toolbar.appendChild(mkPrimaryButton('+ new (workspace)', () => void createAgent('workspace', section)));
+  toolbar.appendChild(mkSecondaryButton('refresh', () => void reload(section)));
   section.appendChild(toolbar);
 
   if (!agents.length) {
-    section.appendChild(emptyState({
-      message: 'no subagents discovered.',
-    }));
+    section.appendChild(emptyState({ message: 'no subagents discovered.' }));
     return;
   }
 
-  // Group by source type. Order: workspace, user, builtin, plugin, other.
   const ORDER = ['workspace', 'project', 'cwd', 'user', 'builtin', 'plugin'];
-  const byKey = new Map();
+  const byKey = new Map<string, AgentRecord[]>();
   for (const a of agents) {
     const src = (a.source && a.source.type) ? String(a.source.type).toLowerCase() : 'other';
     if (!byKey.has(src)) byKey.set(src, []);
-    byKey.get(src).push(a);
+    byKey.get(src)!.push(a);
   }
   const keys = [...byKey.keys()].sort((a, b) => {
     const ia = ORDER.indexOf(a); const ib = ORDER.indexOf(b);
@@ -110,11 +110,11 @@ async function reload(section) {
   section.appendChild(buildFooterHint(
     'Built-in subagents ship with the grok binary and cannot be edited from ' +
     'the dashboard. User and workspace subagents are plain Markdown with YAML ' +
-    'frontmatter; the "+ new" buttons above scaffold a stub for you.'
+    'frontmatter; the "+ new" buttons above scaffold a stub for you.',
   ));
 }
 
-function makeAgentCard(a, section) {
+function makeAgentCard(a: AgentRecord, section: HTMLElement): HTMLElement {
   const card = document.createElement('div');
   card.className = 'health-item';
 
@@ -134,7 +134,7 @@ function makeAgentCard(a, section) {
   sec.textContent = scopeLabel(srcType);
   left.appendChild(sec);
 
-  const tags = [];
+  const tags: string[] = [];
   if (a.model) tags.push(`model: ${a.model}`);
   if (Array.isArray(a.tools)) tags.push(`tools: ${a.tools.length}`);
   if (tags.length) {
@@ -150,7 +150,6 @@ function makeAgentCard(a, section) {
   }
   head.appendChild(left);
 
-  // Actions container.
   const right = document.createElement('div');
   right.style.display = 'inline-flex';
   right.style.gap = '6px';
@@ -165,7 +164,7 @@ function makeAgentCard(a, section) {
   editBtn.textContent = editable ? 'edit' : 'view';
   right.appendChild(editBtn);
 
-  let delBtn = null;
+  let delBtn: HTMLButtonElement | null = null;
   if (editable) {
     delBtn = document.createElement('button');
     delBtn.type = 'button';
@@ -207,7 +206,7 @@ function makeAgentCard(a, section) {
     copyBtn.className = 'health-copy-btn';
     copyBtn.textContent = 'copy';
     copyBtn.title = 'copy path to clipboard';
-    copyBtn.addEventListener('click', async (ev) => {
+    copyBtn.addEventListener('click', async (ev: MouseEvent) => {
       ev.stopPropagation();
       try {
         await navigator.clipboard.writeText(fromPath);
@@ -224,7 +223,6 @@ function makeAgentCard(a, section) {
     card.appendChild(note);
   }
 
-  // Panels (hidden by default).
   const jsonPanel = document.createElement('pre');
   jsonPanel.className = 'health-json-block hidden';
   jsonPanel.textContent = safeStringify(a, 2);
@@ -247,18 +245,19 @@ function makeAgentCard(a, section) {
       editBtn.textContent = editable ? 'edit' : 'view';
       return;
     }
-    openFile(a, fromPath, filePanel, editBtn, editable, section);
+    void openFile(a, fromPath, filePanel, editBtn, editable, section);
   });
   if (delBtn) {
     delBtn.addEventListener('click', async () => {
       if (!confirm(`delete ${a.name}? this removes ${shortenPath(fromPath)}`)) return;
-      delBtn.disabled = true;
+      delBtn!.disabled = true;
       try {
         await api.systemAgents.deleteFile(fromPath);
         await reload(section);
       } catch (err) {
-        alert('delete failed: ' + err.message);
-        delBtn.disabled = false;
+        const msg = err instanceof Error ? err.message : String(err);
+        alert('delete failed: ' + msg);
+        delBtn!.disabled = false;
       }
     });
   }
@@ -266,7 +265,14 @@ function makeAgentCard(a, section) {
   return card;
 }
 
-async function openFile(a, fromPath, panel, editBtn, editable, section) {
+async function openFile(
+  a: AgentRecord,
+  fromPath: string,
+  panel: HTMLElement,
+  editBtn: HTMLButtonElement,
+  editable: boolean,
+  section: HTMLElement,
+): Promise<void> {
   panel.classList.remove('hidden');
   editBtn.textContent = 'close';
   panel.replaceChildren();
@@ -288,7 +294,7 @@ async function openFile(a, fromPath, panel, editBtn, editable, section) {
 
   let content = '';
   try {
-    const r = await api.systemAgents.read(fromPath);
+    const r = await api.systemAgents.read(fromPath) as { ok?: boolean; content?: string; error?: string };
     if (r && r.ok) content = r.content || '';
     else throw new Error((r && r.error) || 'read failed');
   } catch (err) {
@@ -296,7 +302,7 @@ async function openFile(a, fromPath, panel, editBtn, editable, section) {
     const e = document.createElement('div');
     e.style.color = 'var(--red, #f87171)';
     e.style.fontSize = '12px';
-    e.textContent = 'read failed: ' + err.message;
+    e.textContent = 'read failed: ' + (err instanceof Error ? err.message : String(err));
     panel.appendChild(e);
     return;
   }
@@ -318,7 +324,6 @@ async function openFile(a, fromPath, panel, editBtn, editable, section) {
     return;
   }
 
-  // Edit mode.
   const ta = document.createElement('textarea');
   ta.value = content;
   ta.spellcheck = false;
@@ -348,10 +353,10 @@ async function openFile(a, fromPath, panel, editBtn, editable, section) {
     try {
       await api.systemAgents.saveContent(fromPath, ta.value);
       status.textContent = 'saved.';
-      // refresh the inspect payload so any metadata changes propagate.
       await reload(section);
     } catch (err) {
-      status.textContent = 'save failed: ' + err.message;
+      const msg = err instanceof Error ? err.message : String(err);
+      status.textContent = 'save failed: ' + msg;
       saveBtn.disabled = false;
       cancelBtn.disabled = false;
     }
@@ -367,7 +372,7 @@ async function openFile(a, fromPath, panel, editBtn, editable, section) {
   panel.appendChild(bar);
 }
 
-async function createAgent(scope, section) {
+async function createAgent(scope: string, section: HTMLElement): Promise<void> {
   const raw = window.prompt(`new ${scope} subagent name (letters/digits/dash/underscore):`, '');
   if (!raw) return;
   const cleaned = raw.trim().replace(/\s+/g, '-');
@@ -377,15 +382,16 @@ async function createAgent(scope, section) {
     return;
   }
   try {
-    const r = await api.systemAgents.createFile(scope, cleaned + '.md');
+    const r = await api.systemAgents.createFile(scope, cleaned + '.md') as { ok?: boolean; error?: string };
     if (!r || !r.ok) throw new Error((r && r.error) || 'create failed');
     await reload(section);
   } catch (err) {
-    alert('create failed: ' + err.message);
+    const msg = err instanceof Error ? err.message : String(err);
+    alert('create failed: ' + msg);
   }
 }
 
-function mkPrimaryButton(label, onClick) {
+function mkPrimaryButton(label: string, onClick: (ev: MouseEvent) => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'memory-scope-btn';
@@ -393,7 +399,8 @@ function mkPrimaryButton(label, onClick) {
   b.addEventListener('click', onClick);
   return b;
 }
-function mkSecondaryButton(label, onClick) {
+
+function mkSecondaryButton(label: string, onClick: (ev: MouseEvent) => void): HTMLButtonElement {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'health-item-toggle';
@@ -401,3 +408,7 @@ function mkSecondaryButton(label, onClick) {
   b.addEventListener('click', onClick);
   return b;
 }
+
+// Touch cachedInspect to keep the linter from warning if strict noUnusedLocals
+// is flipped on later.
+void cachedInspect;

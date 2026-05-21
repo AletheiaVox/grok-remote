@@ -1,29 +1,31 @@
-// Sessions page. Owned by its sub-agent.
-//
-// Wraps `grok sessions list` / `grok sessions search`. The page shows a
-// search box, a limit input, a refresh button, and a result table. The
-// row click copies the session id; a secondary "use in dashboard" button
-// only lights up when the session id matches one of our backend agents
-// (sessions from the grok TUI need to be imported first).
+// Sessions page.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-let activeContainer = null;
-let state = {
-  q: '',
-  limit: 20,
-  loading: false,
-  error: null,
-  raw: '',
-  items: [],
-  agentIds: new Set(),
-  toast: '',
-  toastTimer: 0,
-};
+interface SessionItem {
+  sessionId: string;
+  created?: string;
+  status?: string;
+  summary?: string;
+}
 
-export function mount(container) {
-  activeContainer = container;
-  state = {
+interface SessionsState {
+  q: string;
+  limit: number;
+  loading: boolean;
+  error: string | null;
+  raw: string;
+  items: SessionItem[];
+  agentIds: Set<string>;
+  toast: string;
+  toastTimer: number;
+}
+
+let activeContainer: HTMLElement | null = null;
+let state: SessionsState = freshState();
+
+function freshState(): SessionsState {
+  return {
     q: '',
     limit: 20,
     loading: false,
@@ -34,13 +36,17 @@ export function mount(container) {
     toast: '',
     toastTimer: 0,
   };
-  render();
-  // Kick off agent-list + initial sessions list in parallel.
-  loadAgents();
-  load();
 }
 
-export function unmount() {
+export function mount(container: HTMLElement): void {
+  activeContainer = container;
+  state = freshState();
+  render();
+  void loadAgents();
+  void load();
+}
+
+export function unmount(): void {
   if (state.toastTimer) {
     clearTimeout(state.toastTimer);
     state.toastTimer = 0;
@@ -51,10 +57,10 @@ export function unmount() {
   }
 }
 
-async function loadAgents() {
+async function loadAgents(): Promise<void> {
   try {
-    const list = await api.listAgents();
-    const ids = new Set();
+    const list = await api.listAgents() as Array<{ id?: string; sessionId?: string }> | null;
+    const ids = new Set<string>();
     if (Array.isArray(list)) {
       for (const a of list) {
         if (a && typeof a.sessionId === 'string' && a.sessionId) ids.add(a.sessionId);
@@ -64,20 +70,20 @@ async function loadAgents() {
     state.agentIds = ids;
     if (activeContainer) render();
   } catch {
-    // Non-fatal. We just won't enable the "use in dashboard" buttons.
+    /* non-fatal */
   }
 }
 
-async function load() {
+async function load(): Promise<void> {
   state.loading = true;
   state.error = null;
   render();
   try {
-    const data = await api.sessions.list({ q: state.q, limit: state.limit });
+    const data = await api.sessions.list({ q: state.q, limit: state.limit }) as { raw?: string; items?: SessionItem[] };
     state.raw = (data && data.raw) || '';
     state.items = (data && Array.isArray(data.items)) ? data.items : [];
   } catch (err) {
-    state.error = err?.message || String(err);
+    state.error = err instanceof Error ? err.message : String(err);
     state.raw = '';
     state.items = [];
   } finally {
@@ -86,18 +92,18 @@ async function load() {
   }
 }
 
-function showToast(msg) {
+function showToast(msg: string): void {
   state.toast = msg;
   if (state.toastTimer) clearTimeout(state.toastTimer);
   state.toastTimer = setTimeout(() => {
     state.toast = '';
     state.toastTimer = 0;
     if (activeContainer) render();
-  }, 1800);
+  }, 1800) as unknown as number;
   render();
 }
 
-async function copyId(sid) {
+async function copyId(sid: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(sid);
     showToast(`copied ${sid.slice(0, 8)}...`);
@@ -106,7 +112,7 @@ async function copyId(sid) {
   }
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: unknown): string {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -115,13 +121,13 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-function truncId(sid) {
+function truncId(sid: string | null | undefined): string {
   if (!sid) return '';
   if (sid.length <= 18) return sid;
   return `${sid.slice(0, 8)}...${sid.slice(-4)}`;
 }
 
-function render() {
+function render(): void {
   if (!activeContainer) return;
   const rowsHtml = state.items.length
     ? state.items.map((it) => {
@@ -210,50 +216,50 @@ function render() {
   wire();
 }
 
-function wire() {
+function wire(): void {
   if (!activeContainer) return;
-  const qInput     = activeContainer.querySelector('.sessions-q');
-  const limitInput = activeContainer.querySelector('.sessions-limit');
-  const refreshBtn = activeContainer.querySelector('.sessions-refresh');
+  const qInput     = activeContainer.querySelector('.sessions-q') as HTMLInputElement | null;
+  const limitInput = activeContainer.querySelector('.sessions-limit') as HTMLInputElement | null;
+  const refreshBtn = activeContainer.querySelector('.sessions-refresh') as HTMLButtonElement | null;
 
   if (qInput) {
-    qInput.addEventListener('input', (e) => { state.q = e.target.value; });
-    qInput.addEventListener('keydown', (e) => {
+    qInput.addEventListener('input', (e: Event) => { state.q = (e.target as HTMLInputElement).value; });
+    qInput.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        load();
+        void load();
       }
     });
   }
   if (limitInput) {
-    limitInput.addEventListener('input', (e) => {
-      const n = parseInt(e.target.value, 10);
+    limitInput.addEventListener('input', (e: Event) => {
+      const n = parseInt((e.target as HTMLInputElement).value, 10);
       state.limit = Number.isFinite(n) && n > 0 ? n : 20;
     });
-    limitInput.addEventListener('keydown', (e) => {
+    limitInput.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        load();
+        void load();
       }
     });
   }
   if (refreshBtn) {
-    refreshBtn.addEventListener('click', () => load());
+    refreshBtn.addEventListener('click', () => void load());
   }
 
   const rows = activeContainer.querySelectorAll('.sessions-row');
   rows.forEach((row) => {
-    row.addEventListener('click', (e) => {
-      // Don't copy when the user clicked the action button.
-      if (e.target && e.target.closest && e.target.closest('.sessions-use')) return;
+    row.addEventListener('click', (e: Event) => {
+      const target = e.target as Element | null;
+      if (target && target.closest && target.closest('.sessions-use')) return;
       const sid = row.getAttribute('data-sid');
-      if (sid) copyId(sid);
+      if (sid) void copyId(sid);
     });
   });
 
   const useBtns = activeContainer.querySelectorAll('.sessions-use');
   useBtns.forEach((btn) => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', (e: Event) => {
       e.stopPropagation();
       const sid = btn.getAttribute('data-sid');
       if (!sid) return;

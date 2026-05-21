@@ -155,19 +155,19 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 |--------|---------------------------------------|------------------------------------------|
 | [x]    | src/views/system/index.js             | src/views/system/index.ts                |
 | [x]    | src/views/system/_native_common.js    | src/views/system/_native_common.ts       |
-| [ ]    | src/views/system/agents.js            | src/views/system/agents.ts               |
+| [x]    | src/views/system/agents.js            | src/views/system/agents.ts               |
 | [ ]    | src/views/system/health.js            | src/views/system/health.ts               |
 | [x]    | src/views/system/hooks.js             | src/views/system/hooks.ts                |
-| [ ]    | src/views/system/import.js            | src/views/system/import.ts               |
+| [x]    | src/views/system/import.js            | src/views/system/import.ts               |
 | [ ]    | src/views/system/leaders.js           | src/views/system/leaders.ts              |
 | [x]    | src/views/system/lsp.js               | src/views/system/lsp.ts                  |
 | [x]    | src/views/system/marketplaces.js      | src/views/system/marketplaces.ts         |
 | [ ]    | src/views/system/mcp.js               | src/views/system/mcp.ts                  |
 | [ ]    | src/views/system/memory.js            | src/views/system/memory.ts               |
-| [ ]    | src/views/system/models.js            | src/views/system/models.ts               |
+| [x]    | src/views/system/models.js            | src/views/system/models.ts               |
 | [x]    | src/views/system/plugins.js           | src/views/system/plugins.ts              |
-| [ ]    | src/views/system/sessions.js          | src/views/system/sessions.ts             |
-| [ ]    | src/views/system/setup.js             | src/views/system/setup.ts                |
+| [x]    | src/views/system/sessions.js          | src/views/system/sessions.ts             |
+| [x]    | src/views/system/setup.js             | src/views/system/setup.ts                |
 | [ ]    | src/views/system/skills.js            | src/views/system/skills.ts               |
 | [ ]    | src/views/system/worktrees.js         | src/views/system/worktrees.ts            |
 | [x]    | src/views/system/flow.js              | src/views/system/flow.ts                 |

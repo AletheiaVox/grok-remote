@@ -1,11 +1,14 @@
 // Models page. Lists what `grok models` knows about. Read-only.
 
-import { api } from '../../lib/api';
+import { api } from '../../lib/api.js';
 
-let activeContainer = null;
-let abortToken      = 0;
+interface ModelItem { id?: string; name?: string }
+interface ModelsResponse { items?: ModelItem[]; raw?: string }
 
-export function mount(container) {
+let activeContainer: HTMLElement | null = null;
+let abortToken = 0;
+
+export function mount(container: HTMLElement): void {
   activeContainer = container;
   abortToken += 1;
   const myToken = abortToken;
@@ -36,10 +39,10 @@ export function mount(container) {
     </section>
   `;
 
-  refresh(container, () => myToken === abortToken).catch(() => {});
+  refresh(container, () => myToken === abortToken).catch(() => { /* ignore */ });
 }
 
-export function unmount() {
+export function unmount(): void {
   abortToken += 1;
   if (activeContainer) {
     activeContainer.replaceChildren();
@@ -47,11 +50,11 @@ export function unmount() {
   }
 }
 
-async function refresh(root, alive) {
-  const errEl = root.querySelector('[data-role="error"]');
+async function refresh(root: HTMLElement, alive: () => boolean): Promise<void> {
+  const errEl = root.querySelector('[data-role="error"]') as HTMLElement | null;
   if (errEl) { errEl.hidden = true; errEl.textContent = ''; }
   try {
-    const data = await api.systemModels.get();
+    const data = await api.systemModels.get() as ModelsResponse;
     if (!alive()) return;
     renderList(root, data);
     renderRaw(root, data);
@@ -59,11 +62,14 @@ async function refresh(root, alive) {
     if (!alive()) return;
     const list = root.querySelector('[data-role="list"]');
     if (list) list.replaceChildren();
-    if (errEl) { errEl.hidden = false; errEl.textContent = err?.message || String(err); }
+    if (errEl) {
+      errEl.hidden = false;
+      errEl.textContent = err instanceof Error ? err.message : String(err);
+    }
   }
 }
 
-function renderList(root, data) {
+function renderList(root: HTMLElement, data: ModelsResponse): void {
   const list = root.querySelector('[data-role="list"]');
   if (!list) return;
   list.replaceChildren();
@@ -89,8 +95,8 @@ function renderList(root, data) {
   }
 }
 
-function renderRaw(root, data) {
-  const pre = root.querySelector('[data-role="raw"]');
+function renderRaw(root: HTMLElement, data: ModelsResponse): void {
+  const pre = root.querySelector('[data-role="raw"]') as HTMLElement | null;
   if (!pre) return;
   pre.textContent = (data && typeof data.raw === 'string') ? data.raw : '';
 }

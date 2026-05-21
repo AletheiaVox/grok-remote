@@ -1,15 +1,23 @@
 // Setup page.
-//
-// Surfaces a single button that runs `grok setup` (managed-deployment
-// installer). After the run completes, the page also shows the post-run
-// `grok inspect --json` output so the user can confirm what changed.
 
 import { el } from '../../lib/render.js';
 
-let activeContainer = null;
-let activeAbort = null;
+interface SetupResponse {
+  ok?: boolean;
+  kind?: string;
+  exitCode?: number;
+  summary?: string;
+  error?: string;
+  stderr?: string;
+  stdout?: string;
+  inspect?: unknown;
+  inspectError?: string;
+}
 
-export function mount(container) {
+let activeContainer: HTMLElement | null = null;
+let activeAbort: AbortController | null = null;
+
+export function mount(container: HTMLElement): void {
   activeContainer = container;
   container.replaceChildren();
 
@@ -38,10 +46,10 @@ export function mount(container) {
   const runBtn = el('button', {
     class: 'btn btn--primary setup-run-btn',
     type: 'button',
-    onclick: () => runSetup(runBtn, resultHost),
-  }, 'Run grok setup');
+    onclick: () => void runSetup(runBtn as HTMLButtonElement, resultHost as HTMLElement),
+  }, 'Run grok setup') as HTMLButtonElement;
 
-  const resultHost = el('div', { class: 'setup-result-host' });
+  const resultHost = el('div', { class: 'setup-result-host' }) as HTMLElement;
 
   const wrap = el('section', { class: 'system-page setup-page' },
     el('h2', { class: 'system-page-title' }, 'Setup'),
@@ -55,7 +63,7 @@ export function mount(container) {
   container.appendChild(wrap);
 }
 
-export function unmount() {
+export function unmount(): void {
   if (activeAbort) {
     try { activeAbort.abort(); } catch { /* ignore */ }
     activeAbort = null;
@@ -66,7 +74,7 @@ export function unmount() {
   }
 }
 
-async function runSetup(btn, resultHost) {
+async function runSetup(btn: HTMLButtonElement, resultHost: HTMLElement): Promise<void> {
   if (!btn || !resultHost) return;
   btn.disabled = true;
   const origLabel = btn.textContent;
@@ -83,14 +91,15 @@ async function runSetup(btn, resultHost) {
       headers: { accept: 'application/json' },
       signal: abort.signal,
     });
-    const data = await r.json().catch(() => null);
+    const data = await r.json().catch(() => null) as SetupResponse | null;
     renderResult(resultHost, r.status, data);
   } catch (err) {
-    if (err && err.name === 'AbortError') return;
+    if (err && (err as { name?: string }).name === 'AbortError') return;
+    const msg = err instanceof Error ? err.message : String(err);
     resultHost.replaceChildren(
       el('div', { class: 'setup-error' },
         el('strong', null, 'request failed: '),
-        String(err && err.message ? err.message : err)),
+        msg),
     );
   } finally {
     if (activeAbort === abort) activeAbort = null;
@@ -99,7 +108,7 @@ async function runSetup(btn, resultHost) {
   }
 }
 
-function renderResult(host, status, data) {
+function renderResult(host: HTMLElement, status: number, data: SetupResponse | null): void {
   host.replaceChildren();
   if (!data || typeof data !== 'object') {
     host.appendChild(el('div', { class: 'setup-error' },
@@ -108,14 +117,11 @@ function renderResult(host, status, data) {
   }
   const kind = typeof data.kind === 'string' ? data.kind : (data.ok ? 'ok' : 'error');
   const exit = data.exitCode ?? '?';
-  // Prefer the first real line of stderr/stdout (server returns this as
-  // data.summary) over the generic GrokCliError message, which is just
-  // "grok exited with code N" and tells the user nothing.
   const summary = (typeof data.summary === 'string' && data.summary)
     || data.error
     || 'unknown error';
 
-  let badge, headline, headMod;
+  let badge: string, headline: string, headMod: string;
   if (kind === 'ok') {
     badge    = 'success';
     headMod  = 'ok';
@@ -136,9 +142,6 @@ function renderResult(host, status, data) {
   );
   host.appendChild(head);
 
-  // Always show stderr/stdout when present so the user can see what the CLI
-  // actually said, regardless of whether we classified the outcome as ok,
-  // info, or error.
   if (data.stderr) {
     host.appendChild(buildOutputBlock('stderr', data.stderr));
   }
@@ -146,8 +149,6 @@ function renderResult(host, status, data) {
     host.appendChild(buildOutputBlock('stdout', data.stdout));
   }
 
-  // Post-setup inspect block. If inspect failed we still surface the error so
-  // the user knows the dashboard tried.
   if (data.inspect) {
     const pretty = JSON.stringify(data.inspect, null, 2);
     host.appendChild(buildOutputBlock('grok inspect --json (after setup)', pretty));
@@ -159,12 +160,12 @@ function renderResult(host, status, data) {
   }
 }
 
-function buildOutputBlock(title, text) {
+function buildOutputBlock(title: string, text: string): HTMLElement {
   const pre = el('pre', { class: 'setup-output-pre' }, text);
   return el('section', { class: 'setup-output' },
     el('header', { class: 'setup-output-head' },
       el('span', { class: 'setup-output-title' }, title),
     ),
     pre,
-  );
+  ) as HTMLElement;
 }
