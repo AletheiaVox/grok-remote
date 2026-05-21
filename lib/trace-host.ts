@@ -6,17 +6,19 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, type SpawnOptions } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
-const GROK_BIN = process.env.GROK_BIN || 'grok';
+const GROK_BIN = process.env['GROK_BIN'] || 'grok';
 
-function runCmd(cmd, args, opts = {}) {
+interface CmdResult { stdout: string; stderr: string; }
+
+function runCmd(cmd: string, args: string[], opts: SpawnOptions = {}): Promise<CmdResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
     let out = '', err = '';
-    child.stdout.on('data', (b) => { out += b.toString('utf8'); });
-    child.stderr.on('data', (b) => { err += b.toString('utf8'); });
+    child.stdout?.on('data', (b: Buffer) => { out += b.toString('utf8'); });
+    child.stderr?.on('data', (b: Buffer) => { err += b.toString('utf8'); });
     child.on('error', reject);
     child.on('exit', (code) => {
       if (code === 0) resolve({ stdout: out, stderr: err });
@@ -25,14 +27,14 @@ function runCmd(cmd, args, opts = {}) {
   });
 }
 
-function readJsonSafe(p) {
+function readJsonSafe(p: string): unknown {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
   catch { return null; }
 }
 
-function readJsonlSafe(p) {
+function readJsonlSafe(p: string): unknown[] {
   try {
-    const out = [];
+    const out: unknown[] = [];
     for (const line of fs.readFileSync(p, 'utf8').split('\n')) {
       if (!line.trim()) continue;
       try { out.push(JSON.parse(line)); } catch { /* skip malformed */ }
@@ -41,38 +43,52 @@ function readJsonlSafe(p) {
   } catch { return []; }
 }
 
-function readTextSafe(p) {
+function readTextSafe(p: string): string {
   try { return fs.readFileSync(p, 'utf8'); } catch { return ''; }
 }
 
-function fileSizeSafe(p) {
+function fileSizeSafe(p: string): number | null {
   try { return fs.statSync(p).size; } catch { return null; }
+}
+
+export interface TraceAgentRecord {
+  sessionId?: string | null;
+  lastSessionId?: string | null;
+  cwd?: string | null;
+}
+
+export interface TraceData {
+  sessionId: string;
+  generatedAt: string;
+  archiveBytes: number | null;
+  exportStatus: unknown;
+  summary: unknown;
+  chatHistory: unknown[];
+  events: unknown[];
+  updates: unknown[];
+  systemPrompt: string;
+  promptContext: unknown;
+  traceConfig: unknown;
+  exportMetadata: unknown;
+  memberSizes: Record<string, number | null>;
 }
 
 // Build the trace for a single agent record (the public shape returned by
 // AgentManager.get / list, which carries .sessionId and .lastSessionId).
-// .sessionId is set while the agent is live; .lastSessionId is set when
-// the agent was disconnected. Either is fine to pass to `grok trace`.
-export async function buildTrace(record) {
+export async function buildTrace(record: TraceAgentRecord): Promise<TraceData> {
   const sessionId = record.sessionId || record.lastSessionId;
   if (!sessionId) {
     throw new Error('no sessionId yet (agent has not completed a handshake)');
   }
-  return buildTraceForSessionId(sessionId, record.cwd);
+  return buildTraceForSessionId(sessionId, record.cwd ?? undefined);
 }
 
 // Build a trace for any raw session id (not just an AgentManager-tracked
-// agent). Used by the sub-agent trace endpoint, which knows the child's
-// sessionId from the parent's tool_call output but has no AgentManager
-// record of its own. `cwd` is optional. `grok trace` resolves the session
-// dir on its own; cwd is here for future use if the CLI ever needs it.
-export async function buildTraceForSessionId(sessionId, cwd) {
+// agent).
+export async function buildTraceForSessionId(sessionId: string, cwd?: string | null): Promise<TraceData> {
   if (!sessionId || typeof sessionId !== 'string') {
     throw new Error('sessionId required');
   }
-  // cwd is reserved for future use (some `grok trace` variants prefer being
-  // run from the originating cwd). Today the CLI resolves sessions by id
-  // regardless, so we just ignore it.
   void cwd;
   const stamp = Date.now().toString(36) + '-' + randomUUID().slice(0, 8);
   const tmpRoot = path.join(os.tmpdir(), `grok-trace-${stamp}`);
@@ -81,23 +97,21 @@ export async function buildTraceForSessionId(sessionId, cwd) {
   fs.mkdirSync(extractDir, { recursive: true });
 
   try {
-    // 1. Export. --local avoids uploading to xAI. --json gives us a
-    //    machine-readable status line on stdout.
     const exportOut = await runCmd(GROK_BIN, [
       'trace', sessionId, '--local', '--json', '-o', archivePath,
     ]);
-    let exportStatus = null;
-    try { exportStatus = JSON.parse(exportOut.stdout.trim().split('\n').pop()); } catch { /* ignore */ }
+    let exportStatus: unknown = null;
+    try {
+      const lastLine = exportOut.stdout.trim().split('\n').pop();
+      if (lastLine) exportStatus = JSON.parse(lastLine);
+    } catch { /* ignore */ }
 
-    // 2. Extract.
     await runCmd('tar', ['-xzf', archivePath, '-C', extractDir]);
 
-    // 3. Find the inner session dir.
-    const inner = fs.readdirSync(extractDir).map(n => path.join(extractDir, n))
-      .find(p => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
+    const inner = fs.readdirSync(extractDir).map((n) => path.join(extractDir, n))
+      .find((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
     if (!inner) throw new Error('trace archive contained no session directory');
 
-    // 4. Parse every known member.
     const members = {
       summary:        path.join(inner, 'summary.json'),
       chatHistory:    path.join(inner, 'chat_history.jsonl'),
@@ -107,9 +121,9 @@ export async function buildTraceForSessionId(sessionId, cwd) {
       promptContext:  path.join(inner, 'prompt_context.json'),
       traceConfig:    path.join(inner, 'trace_config.json'),
       exportMetadata: path.join(inner, 'export_metadata.json'),
-    };
+    } as const;
 
-    const data = {
+    const data: TraceData = {
       sessionId,
       generatedAt:    new Date().toISOString(),
       archiveBytes:   fileSizeSafe(archivePath),
@@ -122,16 +136,13 @@ export async function buildTraceForSessionId(sessionId, cwd) {
       promptContext:  readJsonSafe(members.promptContext),
       traceConfig:    readJsonSafe(members.traceConfig),
       exportMetadata: readJsonSafe(members.exportMetadata),
-      // sizes for the Files tab in the UI
       memberSizes: Object.fromEntries(
-        Object.entries(members).map(([k, p]) => [k, fileSizeSafe(p)])
+        Object.entries(members).map(([k, p]) => [k, fileSizeSafe(p)]),
       ),
     };
 
     return data;
   } finally {
-    // Always clean up the tmp dir. The UI re-fetches every time the tab
-    // is opened, so we never want stale archives on disk.
     try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 }

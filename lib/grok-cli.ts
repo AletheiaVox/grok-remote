@@ -1,36 +1,49 @@
 // Thin wrapper around the `grok` CLI for the system-pages routes.
-//
-// Every `grok <subcommand>` we want to surface in the web UI goes through
-// `runGrok(args, opts)`. The wrapper:
-//
-// - Pipes stdout/stderr (no inherited PTY) so a misbehaving grok run can't
-//   hang the http process.
-// - Bounds output (`maxBytes`, default 1 MB) so a runaway command can't
-//   exhaust memory.
-// - Times out (`timeoutMs`, default 20 s) and kills the child on overrun.
-// - When `json: true`, parses the stdout body as JSON. Many grok subcommands
-//   take a `--json` flag; the caller is responsible for adding that flag.
-//
-// Anything that needs interactive input from the user (sudo password,
-// tailscale login, oauth flow) is NOT a good fit for this wrapper and
-// should stay in the installer.
 
 import { spawn } from 'node:child_process';
 
-const GROK_BIN = process.env.GROK_BIN || 'grok';
+const GROK_BIN = process.env['GROK_BIN'] || 'grok';
+
+export interface GrokCliErrorInit {
+  code?: number | null;
+  stdout?: string;
+  stderr?: string;
+  args?: readonly string[] | null;
+}
 
 export class GrokCliError extends Error {
-  constructor(message, { code, stdout, stderr, args } = {}) {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  args: readonly string[] | null;
+
+  constructor(message: string, init: GrokCliErrorInit = {}) {
     super(message);
     this.name = 'GrokCliError';
-    this.code = code ?? null;
-    this.stdout = stdout || '';
-    this.stderr = stderr || '';
-    this.args = args || null;
+    this.code = init.code ?? null;
+    this.stdout = init.stdout || '';
+    this.stderr = init.stderr || '';
+    this.args = init.args || null;
   }
 }
 
-export function runGrok(args, opts = {}) {
+export interface RunGrokOptions {
+  timeoutMs?: number;
+  maxBytes?: number;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  json?: boolean;
+  stdin?: string | null;
+}
+
+export interface RunGrokResult {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  json?: unknown;
+}
+
+export function runGrok(args: string[], opts: RunGrokOptions = {}): Promise<RunGrokResult> {
   const {
     timeoutMs = 20_000,
     maxBytes  = 1_048_576,
@@ -40,7 +53,7 @@ export function runGrok(args, opts = {}) {
     stdin     = null,
   } = opts;
 
-  return new Promise((resolve, reject) => {
+  return new Promise<RunGrokResult>((resolve, reject) => {
     const child = spawn(GROK_BIN, args, {
       cwd,
       env,
@@ -59,7 +72,7 @@ export function runGrok(args, opts = {}) {
       setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } }, 1500);
     }, timeoutMs);
 
-    child.stdout.on('data', (buf) => {
+    child.stdout?.on('data', (buf: Buffer) => {
       outBytes += buf.length;
       if (outBytes > maxBytes) {
         killed = true;
@@ -68,18 +81,18 @@ export function runGrok(args, opts = {}) {
       }
       stdout += buf.toString('utf8');
     });
-    child.stderr.on('data', (buf) => {
+    child.stderr?.on('data', (buf: Buffer) => {
       errBytes += buf.length;
-      if (errBytes > maxBytes) return; // just drop excess stderr
+      if (errBytes > maxBytes) return;
       stderr += buf.toString('utf8');
     });
 
-    child.on('error', (err) => {
+    child.on('error', (err: Error) => {
       clearTimeout(timer);
       reject(new GrokCliError(err.message, { args, stdout, stderr }));
     });
 
-    child.on('exit', (code) => {
+    child.on('exit', (code: number | null) => {
       clearTimeout(timer);
       if (killed) {
         return reject(new GrokCliError('grok call timed out or exceeded output limit', {
@@ -92,15 +105,12 @@ export function runGrok(args, opts = {}) {
         }));
       }
       if (!json) return resolve({ stdout, stderr, code });
-      // Many `--json` grok commands print exactly one JSON object/array.
-      // Some print one JSON object per line (e.g. import --list --json).
-      // Try the simple parse first, fall back to NDJSON.
       const trimmed = stdout.trim();
       if (!trimmed) return resolve({ json: null, stdout, stderr, code });
       try {
         return resolve({ json: JSON.parse(trimmed), stdout, stderr, code });
       } catch { /* fall through to NDJSON */ }
-      const rows = [];
+      const rows: unknown[] = [];
       for (const line of trimmed.split('\n')) {
         const t = line.trim();
         if (!t) continue;
@@ -110,27 +120,33 @@ export function runGrok(args, opts = {}) {
       return reject(new GrokCliError('failed to parse grok output as JSON', { code, stdout, stderr, args }));
     });
 
-    if (stdin) {
+    if (stdin && child.stdin) {
       try { child.stdin.write(stdin); } catch { /* ignore */ }
     }
-    try { child.stdin.end(); } catch { /* ignore */ }
+    try { child.stdin?.end(); } catch { /* ignore */ }
   });
 }
 
-// Convenience: surface stdout text only, throw on non-zero.
-export async function runGrokText(args, opts = {}) {
+export async function runGrokText(args: string[], opts: RunGrokOptions = {}): Promise<string> {
   const r = await runGrok(args, { ...opts, json: false });
   return r.stdout;
 }
 
-// Convenience: parse --json output (or NDJSON) into a value.
-export async function runGrokJson(args, opts = {}) {
+export async function runGrokJson(args: string[], opts: RunGrokOptions = {}): Promise<unknown> {
   const r = await runGrok(args, { ...opts, json: true });
   return r.json;
 }
 
-// Errors-as-JSON helper for HTTP handlers.
-export function errorToResponse(err) {
+export interface ErrorResponse {
+  ok: false;
+  error: string;
+  code?: number | null;
+  stderr?: string;
+  stdout?: string;
+  args?: readonly string[] | null;
+}
+
+export function errorToResponse(err: unknown): ErrorResponse {
   if (err instanceof GrokCliError) {
     return {
       ok: false,
@@ -141,5 +157,6 @@ export function errorToResponse(err) {
       args: err.args,
     };
   }
-  return { ok: false, error: err?.message || String(err) };
+  const msg = err instanceof Error ? err.message : String(err);
+  return { ok: false, error: msg };
 }

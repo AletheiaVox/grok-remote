@@ -4,7 +4,35 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-function withinScope(scopeDir, target) {
+export interface RpcError extends Error {
+  rpc: { code: number; message: string };
+}
+
+export interface ReadTextFileParams {
+  path?: string;
+  limit?: number;
+  line?: number;
+}
+
+export interface ReadTextFileResult {
+  content: string;
+}
+
+export interface WriteTextFileParams {
+  path?: string;
+  content?: string;
+}
+
+export interface FsHostOptions {
+  getCwd: () => string | null | undefined;
+}
+
+export interface FsHost {
+  readTextFile(params: ReadTextFileParams): Promise<ReadTextFileResult>;
+  writeTextFile(params: WriteTextFileParams): Promise<Record<string, never>>;
+}
+
+function withinScope(scopeDir: string | null | undefined, target: string): boolean {
   if (!scopeDir) return true;
   const scope = path.resolve(scopeDir);
   const resolved = path.resolve(target);
@@ -12,14 +40,14 @@ function withinScope(scopeDir, target) {
   return resolved === scope || resolved.startsWith(scope + path.sep);
 }
 
-function rpcError(code, message) {
-  const err = new Error(message);
+function rpcError(code: number, message: string): RpcError {
+  const err = new Error(message) as RpcError;
   err.rpc = { code, message };
   return err;
 }
 
-export function createFsHost({ getCwd }) {
-  function resolveAndCheck(p) {
+export function createFsHost({ getCwd }: FsHostOptions): FsHost {
+  function resolveAndCheck(p: unknown): string {
     if (typeof p !== 'string' || !p.length) {
       throw rpcError(-32602, 'path must be a non-empty string');
     }
@@ -32,7 +60,7 @@ export function createFsHost({ getCwd }) {
   }
 
   return {
-    async readTextFile(params) {
+    async readTextFile(params: ReadTextFileParams): Promise<ReadTextFileResult> {
       const target = resolveAndCheck(params?.path);
       const content = await fs.readFile(target, 'utf8');
       const limit = params?.limit;
@@ -46,7 +74,7 @@ export function createFsHost({ getCwd }) {
       return { content };
     },
 
-    async writeTextFile(params) {
+    async writeTextFile(params: WriteTextFileParams): Promise<Record<string, never>> {
       const target = resolveAndCheck(params?.path);
       const content = params?.content;
       if (typeof content !== 'string') {

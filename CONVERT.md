@@ -97,15 +97,15 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 
 | Status | File                          | Target                          |
 |--------|-------------------------------|----------------------------------|
-| [ ]    | lib/settings.js               | lib/settings.ts                  |
-| [ ]    | lib/history.js                | lib/history.ts                   |
+| [x]    | lib/settings.js               | lib/settings.ts                  |
+| [x]    | lib/history.js                | lib/history.ts                   |
 | [ ]    | lib/version-update.js         | lib/version-update.ts            |
-| [ ]    | lib/grok-cli.js               | lib/grok-cli.ts                  |
+| [x]    | lib/grok-cli.js               | lib/grok-cli.ts                  |
 | [ ]    | lib/acp-client.js             | lib/acp-client.ts                |
-| [ ]    | lib/fs-host.js                | lib/fs-host.ts                   |
-| [ ]    | lib/terminal-host.js          | lib/terminal-host.ts             |
-| [ ]    | lib/permission-host.js        | lib/permission-host.ts           |
-| [ ]    | lib/trace-host.js             | lib/trace-host.ts                |
+| [x]    | lib/fs-host.js                | lib/fs-host.ts                   |
+| [x]    | lib/terminal-host.js          | lib/terminal-host.ts             |
+| [x]    | lib/permission-host.js        | lib/permission-host.ts           |
+| [x]    | lib/trace-host.js             | lib/trace-host.ts                |
 | [ ]    | lib/agent-manager.js          | lib/agent-manager.ts             |
 
 ### Phase 3 — server route handlers
