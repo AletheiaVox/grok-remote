@@ -5,7 +5,9 @@ module.exports = {
   apps: [
     {
       name: 'grok-remote',
-      script: 'server.js',
+      script: 'server.ts',
+      interpreter: 'node',
+      interpreter_args: '--import tsx',
       cwd: __dirname,
       instances: 1,
       exec_mode: 'fork',

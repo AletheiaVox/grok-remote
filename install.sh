@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # grok-remote bootstrap
 # Minimal bash: ensure Node.js >= 20 is available, then hand off everything
-# to installer.js which has the real animated experience.
+# to installer.ts which has the real animated experience.
 
 set -e
 
@@ -37,6 +37,11 @@ if [ "$NODE_VERSION" -lt "$NEED_NODE_MAJOR" ]; then
   install_node_via_brew
 fi
 
-printf "${C_TEAL}bootstrap${C_RESET}  node $(node --version) ready, handing off to installer.js\n\n"
+printf "${C_TEAL}bootstrap${C_RESET}  node $(node --version) ready, handing off to installer.ts\n\n"
 
-exec node "$HERE/installer.js" "$@"
+if [ ! -d "$HERE/node_modules/tsx" ]; then
+  printf "${C_DIM}bootstrap${C_RESET}  installing dev dependencies (tsx, typescript) ...\n"
+  (cd "$HERE" && npm install --no-audit --no-fund)
+fi
+
+exec node --import tsx "$HERE/installer.ts" "$@"

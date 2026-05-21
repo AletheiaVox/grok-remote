@@ -5,8 +5,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "install:setup": "node installer.js",
-    "start": "node server.js",
+    "install:setup": "node --import tsx installer.ts",
+    "start": "node --import tsx server.ts",
     "dev": "vite",
     "dev:server": "tsx watch server.ts",
     "test": "node --import tsx --test test/*.test.ts test/*.test.js",
@@ -35,7 +35,7 @@
   "license": "MIT",
   "author": "Daniel Farina <https://x.com/daniel_farinax>",
   "bin": {
-    "grok-remote": "./server.js"
+    "grok-remote": "./bin/gr"
   },
   "dependencies": {
     "@xyflow/react": "^12.10.2",

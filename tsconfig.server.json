@@ -9,16 +9,13 @@
     "rootDir": ".",
     "sourceMap": true,
     "declaration": false,
-    "allowJs": true,
+    "allowJs": false,
     "isolatedModules": false
   },
   "include": [
     "server.ts",
     "installer.ts",
-    "server.js",
-    "installer.js",
-    "lib/**/*.ts",
-    "lib/**/*.js"
+    "lib/**/*.ts"
   ],
   "exclude": [
     "node_modules",
