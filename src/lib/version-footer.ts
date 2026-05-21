@@ -163,7 +163,9 @@ function paint(): void {
     class: 'btn app-footer__update-btn',
     title: 'pull origin/main, build, and restart',
     onclick: () => {
-      openUpdateModal({ current: currentInfo, latest: latestInfo });
+      // latestInfo is narrowed to the available-update branch upstream of
+      // this click handler, but TS can't see it through the closure.
+      openUpdateModal({ current: currentInfo, latest: latestInfo as unknown as { latestSha?: string; latestVersion?: string; behind?: number } | null });
     },
   },
     el('span', { class: 'app-footer__update-ico', html: iconHtml('refresh-cw') }),

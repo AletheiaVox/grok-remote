@@ -292,11 +292,11 @@ export function setupImageAttach(
     try { if (target) target.value = ''; } catch { /* ignore */ }
   }
 
-  if (textarea) textarea.addEventListener('paste', onPaste as EventListener);
+  if (textarea) textarea.addEventListener('paste', onPaste as unknown as EventListener);
   container.addEventListener('dragenter', onDragEnter as EventListener);
   container.addEventListener('dragover',  onDragOver as EventListener);
   container.addEventListener('dragleave', onDragLeave as EventListener);
-  container.addEventListener('drop',      onDrop as EventListener);
+  container.addEventListener('drop',      onDrop as unknown as EventListener);
   if (fileInput) fileInput.addEventListener('change', onFileChange as EventListener);
 
   render();
@@ -324,11 +324,11 @@ export function setupImageAttach(
     isSupported(): boolean { return supported(); },
     destroy(): void {
       destroyed = true;
-      if (textarea) textarea.removeEventListener('paste', onPaste as EventListener);
+      if (textarea) textarea.removeEventListener('paste', onPaste as unknown as EventListener);
       container.removeEventListener('dragenter', onDragEnter as EventListener);
       container.removeEventListener('dragover',  onDragOver as EventListener);
       container.removeEventListener('dragleave', onDragLeave as EventListener);
-      container.removeEventListener('drop',      onDrop as EventListener);
+      container.removeEventListener('drop',      onDrop as unknown as EventListener);
       if (fileInput) fileInput.removeEventListener('change', onFileChange as EventListener);
       try { pills.remove(); } catch { /* ignore */ }
       try { notice.remove(); } catch { /* ignore */ }

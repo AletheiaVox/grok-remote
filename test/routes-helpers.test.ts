@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import { send, readJsonBody } from '../lib/routes/helpers.ts';
+import { send, readJsonBody } from '../lib/routes/helpers.js';
 
 // Minimal stand-in for ServerResponse with the surface that send() touches.
 interface FakeRes {

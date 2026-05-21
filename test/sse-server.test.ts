@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ServerResponse } from 'node:http';
 
-import { writeHeaders, writeEvent, writePing } from '../lib/sse.ts';
+import { writeHeaders, writeEvent, writePing } from '../lib/sse.js';
 
 // Minimal ServerResponse stand-in. Records writeHead/write/end calls so the
 // tests can assert on the SSE wire format.

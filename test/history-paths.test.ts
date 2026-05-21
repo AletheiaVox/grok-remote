@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
 
-import { agentDir, historyPath } from '../lib/history.ts';
+import { agentDir, historyPath } from '../lib/history.js';
 
 const EXPECTED_ROOT = path.join(os.homedir(), '.grok-remote', 'agents');
 

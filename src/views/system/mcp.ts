@@ -456,7 +456,7 @@ async function submitAddForm(form: HTMLFormElement): Promise<void> {
   syncFormVisibility(form);
 
   try {
-    const resp = await api.mcp.add(body) as { servers?: unknown } | undefined;
+    const resp = await api.mcp.add(body as unknown as Record<string, unknown>) as { servers?: unknown } | undefined;
     if (Array.isArray(resp?.servers)) state.servers = resp!.servers as McpServer[];
     form.reset();
     state.formType = 'stdio';

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { GrokCliError, errorToResponse } from '../lib/grok-cli.ts';
+import { GrokCliError, errorToResponse } from '../lib/grok-cli.js';
 
 test('GrokCliError extends Error with the expected name and message', () => {
   const err = new GrokCliError('grok crashed');

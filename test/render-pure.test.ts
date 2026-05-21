@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { escapeHtml, isTodoWriteToolCall } from '../src/lib/render.ts';
+import { escapeHtml, isTodoWriteToolCall } from '../src/lib/render.js';
 
 test('escapeHtml escapes the four HTML-significant characters', () => {
   assert.equal(escapeHtml('&'), '&amp;');
@@ -48,9 +48,12 @@ test('isTodoWriteToolCall returns false for other tool kinds', () => {
 });
 
 test('isTodoWriteToolCall returns false for missing or malformed input', () => {
+  // The strict signature is `ToolPayload | null | undefined`, but the function
+  // also guards against `rawInput: null` at runtime. Cast through unknown for
+  // the null case so the runtime guard is exercised under tsc strict.
   assert.equal(isTodoWriteToolCall(null), false);
   assert.equal(isTodoWriteToolCall(undefined), false);
   assert.equal(isTodoWriteToolCall({}), false);
-  assert.equal(isTodoWriteToolCall({ rawInput: null }), false);
+  assert.equal(isTodoWriteToolCall({ rawInput: null } as unknown as Parameters<typeof isTodoWriteToolCall>[0]), false);
   assert.equal(isTodoWriteToolCall({ rawInput: undefined }), false);
 });

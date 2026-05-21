@@ -239,15 +239,17 @@ logged-in `grok` CLI on the host.
 
 ### Phase 10 — final sweep
 
-- [ ] turn off `allowJs` in tsconfig
-- [ ] delete any remaining `.js` files in `src/` and `lib/`
+- [ ] turn off `allowJs` in tsconfig (no `.js` left in `src/` or `lib/` — safe)
+- [x] delete any remaining `.js` files in `src/` and `lib/` (only `experiments/probe.js` left, already excluded)
 - [ ] update README's repo layout section
 - [ ] document local integration test runner in README
 - [ ] remove `// @ts-nocheck` from `src/views/system/flow.tsx` and add real types
 - [ ] remove `// @ts-nocheck` from `src/views/chat.ts` and add real types
-- [ ] fix backlog of `tsc --noEmit` errors accumulated through phases 4-6
-      (server.ts drag events, version-footer LatestInfo, settings PageModule,
-       mcp AddServerBody index sig, worktrees Filters/GcState casts, etc.)
+- [x] fix backlog of `tsc --noEmit` errors accumulated through phases 4-6
+      (acp-client never-collapse, attach-images EventListener casts,
+       version-footer LatestInfo, settings PageModule, mcp AddServerBody,
+       worktrees Filters/GcState, render.ts PENDING_STYLE, main.ts callback)
+      → `npm run typecheck` now clean (was 64 errors)
 
 ## How to iterate
 

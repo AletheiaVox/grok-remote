@@ -20,7 +20,7 @@ const docDataset: Record<string, string> = {};
   documentElement: { dataset: docDataset },
 };
 
-const themes = await import('../src/lib/themes.ts');
+const themes = await import('../src/lib/themes.js');
 
 test('THEMES exposes the four known themes', () => {
   const names = themes.THEMES.map((t) => t.name).sort();

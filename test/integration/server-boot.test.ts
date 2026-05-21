@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
 
-import { ENABLED, SKIP_REASON, bootServer, shutdown } from './_helpers.ts';
+import { ENABLED, SKIP_REASON, bootServer, shutdown } from './_helpers.js';
 
 // Phase 9 — smoke. Boot the real server.ts on a random port and probe the
 // always-on endpoints. See ./_helpers.ts for the boot loop. Gated on the

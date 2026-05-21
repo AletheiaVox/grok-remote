@@ -146,7 +146,7 @@ function makeRailIcon({ href, title, area, iconName, label }: RailIconOpts): HTM
   });
   const icon = document.createElement('span');
   icon.className = 'left-rail-icon';
-  icon.innerHTML = iconHtml(iconName);
+  icon.innerHTML = iconHtml(iconName || '');
   a.appendChild(icon);
   const lbl = el('span', { class: 'left-rail-label' }, label || title);
   a.appendChild(lbl);
@@ -316,8 +316,8 @@ function mountDashboard(): void {
         sidebar.renderList();
         chat.setAgent(found);
       } else {
-        api.getAgent(route.agentId).then((a: Agent | null) => {
-          currentAgent = a || { id: route.agentId };
+        api.getAgent(route.agentId).then((a: unknown) => {
+          currentAgent = (a as Agent | null) || { id: route.agentId };
           sidebar.selectedId = currentAgent.id;
           sidebar.renderList();
           chat.setAgent(currentAgent);

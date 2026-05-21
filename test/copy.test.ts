@@ -5,7 +5,7 @@ import {
   serializeConversation,
   serializeResumeCommand,
   type ConvoTurn,
-} from '../src/lib/copy.ts';
+} from '../src/lib/copy.js';
 
 test('serializeResumeCommand fills in sessionId and cwd when given', () => {
   const out = serializeResumeCommand({

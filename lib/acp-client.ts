@@ -289,7 +289,16 @@ export class AcpClient extends EventEmitter {
     }
     this.emit('rpc_recv', msg);
 
-    const anyMsg = msg as Partial<JsonRpcRequest & JsonRpcResponse>;
+    // `Partial<JsonRpcRequest & JsonRpcResponse>` collapses to never because
+    // JsonRpcResponse declares `method?: never`. Use an explicit ad-hoc shape
+    // covering every JSON-RPC field we read in this dispatcher.
+    const anyMsg = msg as {
+      id?: string | number;
+      method?: string;
+      params?: unknown;
+      result?: unknown;
+      error?: { code: number; message: string; data?: unknown };
+    };
     if (anyMsg.id != null && (anyMsg.result !== undefined || anyMsg.error !== undefined) && !anyMsg.method) {
       const p = this._pending.get(anyMsg.id);
       if (p) {

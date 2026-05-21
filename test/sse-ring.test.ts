@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createRing, type SseRingEntry } from '../lib/sse.ts';
+import { createRing, type SseRingEntry } from '../lib/sse.js';
 
 interface Entry extends SseRingEntry {
   id: number;

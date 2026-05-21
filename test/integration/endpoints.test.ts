@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
 
-import { ENABLED, SKIP_REASON, bootServer, shutdown } from './_helpers.ts';
+import { ENABLED, SKIP_REASON, bootServer, shutdown } from './_helpers.js';
 
 // Phase 9 — more public endpoints. Read-only probes only; nothing in here
 // mutates user state (no PATCH /api/settings, no agent spawns, no grok bin

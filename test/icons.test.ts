@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ICONS, iconHtml } from '../src/lib/icons.ts';
+import { ICONS, iconHtml } from '../src/lib/icons.js';
 
 test('iconHtml returns an empty string for unknown icon names', () => {
   assert.equal(iconHtml('not-a-real-icon'), '');

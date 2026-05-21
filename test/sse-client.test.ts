@@ -45,7 +45,7 @@ class FakeEventSource implements FakeES {
 
 (globalThis as unknown as { EventSource: typeof FakeEventSource }).EventSource = FakeEventSource;
 
-const { openStream } = await import('../src/lib/sse.ts');
+const { openStream } = await import('../src/lib/sse.js');
 
 function fresh(): FakeES {
   lastInstance = null;

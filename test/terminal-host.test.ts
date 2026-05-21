@@ -4,7 +4,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { createTerminalHost } from '../lib/terminal-host.ts';
+import { createTerminalHost } from '../lib/terminal-host.js';
 
 // terminal-host wraps node:child_process.spawn. These tests run real (but
 // trivial) subprocesses — `echo`, `false`, and a sleep loop — so they exercise

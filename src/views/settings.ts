@@ -131,7 +131,7 @@ export class SettingsView {
     }
 
     const page = getSettingsPage(this._activeArea) as (PageModule & { module?: PageModule }) | null;
-    const mod: PageModule | undefined = page && (page as { module?: PageModule }).module;
+    const mod: PageModule | undefined = (page && (page as { module?: PageModule }).module) || undefined;
     if (!page || !mod || typeof mod.mount !== 'function') {
       this.contentHost.appendChild(
         el('div', { class: 'pane-empty' }, `no view for "${this._activeArea}"`),

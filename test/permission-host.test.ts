@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createPermissionHost } from '../lib/permission-host.ts';
+import { createPermissionHost } from '../lib/permission-host.js';
 
 test('createPermissionHost always responds "selected/allow_always" regardless of payload', async () => {
   const host = createPermissionHost();

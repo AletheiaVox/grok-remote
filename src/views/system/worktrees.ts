@@ -33,10 +33,14 @@ interface RowState {
   busy: boolean;
 }
 
-interface Filters { repo: string; type: string; all: boolean }
+interface Filters {
+  repo: string; type: string; all: boolean;
+  [key: string]: string | boolean;
+}
 interface GcState {
   open: boolean; dryRun: boolean; maxAge: string; force: boolean;
   output: string | null; error: string | null; busy: boolean;
+  [key: string]: string | boolean | null;
 }
 interface DbState {
   statsText: string | null; statsErr: string | null;
@@ -278,13 +282,13 @@ function bindListTab(root: HTMLElement): void {
     inp.addEventListener('change', () => {
       const k = inp.getAttribute('data-filter') as keyof Filters | null;
       if (!k) return;
-      if (inp.type === 'checkbox') (state.filters as Record<string, unknown>)[k] = inp.checked;
-      else (state.filters as Record<string, unknown>)[k] = inp.value;
+      if (inp.type === 'checkbox') state.filters[k] = inp.checked;
+      else state.filters[k] = inp.value;
     });
     inp.addEventListener('input', () => {
       const k = inp.getAttribute('data-filter') as keyof Filters | null;
       if (!k) return;
-      if (inp.type !== 'checkbox') (state.filters as Record<string, unknown>)[k] = inp.value;
+      if (inp.type !== 'checkbox') state.filters[k] = inp.value;
     });
   }
 
@@ -292,13 +296,13 @@ function bindListTab(root: HTMLElement): void {
     inp.addEventListener('change', () => {
       const k = inp.getAttribute('data-gc-input');
       if (!k) return;
-      if (inp.type === 'checkbox') (state.gc as Record<string, unknown>)[k] = inp.checked;
-      else (state.gc as Record<string, unknown>)[k] = inp.value;
+      if (inp.type === 'checkbox') state.gc[k] = inp.checked;
+      else state.gc[k] = inp.value;
     });
     inp.addEventListener('input', () => {
       const k = inp.getAttribute('data-gc-input');
       if (!k) return;
-      if (inp.type !== 'checkbox') (state.gc as Record<string, unknown>)[k] = inp.value;
+      if (inp.type !== 'checkbox') state.gc[k] = inp.value;
     });
   }
   root.querySelector<HTMLButtonElement>('[data-act=gc-run]')?.addEventListener('click', () => { void runGc(); });

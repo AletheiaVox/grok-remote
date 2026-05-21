@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-import { createFsHost } from '../lib/fs-host.ts';
+import { createFsHost } from '../lib/fs-host.js';
 
 // Build a fresh tmpdir scope per test so they don't leak into each other or
 // the user's home directory.

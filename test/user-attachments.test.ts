@@ -10,7 +10,6 @@ test('userAttachmentThumbnails renders pasted image payloads as data URLs', () =
   assert.deepEqual(
     userAttachmentThumbnails([
       {
-        kind: 'image',
         name: 'pasted.png',
         mimeType: 'image/png',
         size: 123,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sweepOnce } from '../lib/retention.ts';
+import { sweepOnce } from '../lib/retention.js';
 
 // Disabled-path coverage. The full sweep reads ~/.grok-remote/agents/ from
 // disk, which we deliberately don't touch from tests. These cases lock in the

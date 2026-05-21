@@ -6,7 +6,7 @@ import {
   parsePortFromCommand,
   looksLikeDevServer,
   inferDevServerUrl,
-} from '../lib/dev-url.ts';
+} from '../lib/dev-url.js';
 
 test('scanOutputForUrl returns null for empty or non-string input', () => {
   assert.equal(scanOutputForUrl(null), null);

@@ -282,8 +282,9 @@ export function renderThinkingPane(): ThinkingPane {
 
 interface StatusStyle { cls: string; label: string }
 
+const PENDING_STYLE: StatusStyle = { cls: 'tool-status--pending', label: 'pending' };
 const STATUS_STYLES: Record<string, StatusStyle> = {
-  Pending:   { cls: 'tool-status--pending',   label: 'pending'   },
+  Pending:   PENDING_STYLE,
   Running:   { cls: 'tool-status--running',   label: 'running'   },
   Completed: { cls: 'tool-status--completed', label: 'completed' },
   Failed:    { cls: 'tool-status--failed',    label: 'failed'    },
@@ -362,7 +363,7 @@ export interface ToolCard {
 export function renderToolCard(initial: ToolPayload): ToolCard {
   if (isTodoWriteToolCall(initial)) return renderTodoWriteCard(initial);
   const status = readStatus(initial) || 'Pending';
-  const styleInfo = STATUS_STYLES[status] || STATUS_STYLES.Pending;
+  const styleInfo = STATUS_STYLES[status] || PENDING_STYLE;
   const startedAt = Date.now();
   let endedAt: number | null = null;
 

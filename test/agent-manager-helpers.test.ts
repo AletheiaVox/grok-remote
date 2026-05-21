@@ -9,7 +9,7 @@ import {
   uniqueUploadName,
   humanSize,
   attachmentLine,
-} from '../lib/agent-manager.ts';
+} from '../lib/agent-manager.js';
 
 test('sanitizeFilename keeps safe characters as-is', () => {
   assert.equal(sanitizeFilename('image.png'),     'image.png');

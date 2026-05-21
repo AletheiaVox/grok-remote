@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fmtTokens } from '../src/lib/format.ts';
+import { fmtTokens } from '../src/lib/format.js';
 
 test('fmtTokens returns empty string for non-positive values', () => {
   assert.equal(fmtTokens(0), '');
