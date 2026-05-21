@@ -14,6 +14,7 @@ import os from 'node:os';
 
 import { AgentManager } from './lib/agent-manager.js';
 import { load as loadSettings, save as saveSettings } from './lib/settings.js';
+import * as folders from './lib/folders.js';
 import { startRetentionTimer } from './lib/retention.js';
 import { inferDevServerUrl } from './lib/dev-url.js';
 import { readAll as readHistory } from './lib/history.js';
@@ -222,6 +223,53 @@ async function handleApi(req, res, url, method) {
 
   if (url === '/api/bg-terminals' && method === 'GET') {
     return handleGlobalBgTerminals(req, res);
+  }
+
+  // ── folders ───────────────────────────────────────────────────────────
+  if (url === '/api/folders' && method === 'GET') {
+    return sendJson(res, 200, { folders: folders.list() });
+  }
+  if (url === '/api/folders' && method === 'POST') {
+    try {
+      const body = await readJsonBody(req) || {};
+      const folder = folders.create({ name: body.name });
+      return sendJson(res, 201, folder);
+    } catch (err) {
+      return sendJson(res, 400, { ok: false, error: err.message });
+    }
+  }
+  {
+    const fm = url.match(/^\/api\/folders\/([^\/?]+)$/);
+    if (fm && method === 'PATCH') {
+      try {
+        const body = await readJsonBody(req) || {};
+        const folder = folders.update(fm[1], body);
+        return sendJson(res, 200, folder);
+      } catch (err) {
+        const status = err.message === 'folder not found' ? 404 : 400;
+        return sendJson(res, status, { ok: false, error: err.message });
+      }
+    }
+    if (fm && method === 'DELETE') {
+      const ok = folders.remove(fm[1]);
+      return sendJson(res, ok ? 200 : 404, { ok });
+    }
+  }
+  // Convenience endpoint for drag-and-drop. Body: { folderId: string|null }.
+  // null/missing folderId removes the agent from all folders.
+  {
+    const fm = url.match(/^\/api\/agents\/([^\/?]+)\/folder$/);
+    if (fm && method === 'PUT') {
+      try {
+        const body = await readJsonBody(req) || {};
+        const folderId = typeof body.folderId === 'string' && body.folderId ? body.folderId : null;
+        const next = folders.assignAgent(fm[1], folderId);
+        return sendJson(res, 200, { folders: next });
+      } catch (err) {
+        const status = err.message === 'folder not found' ? 404 : 400;
+        return sendJson(res, status, { ok: false, error: err.message });
+      }
+    }
   }
 
   // GET /api/subagents/:sessionId/trace

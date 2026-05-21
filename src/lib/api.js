@@ -111,6 +111,15 @@ export const api = {
   getSettings:  ()            => request('GET',    '/api/settings'),
   patchSettings:(body)        => request('PATCH',  '/api/settings', body),
 
+  folders: {
+    list:   ()                  => request('GET',    '/api/folders'),
+    create: (name)              => request('POST',   '/api/folders', { name }),
+    update: (id, patch)         => request('PATCH',  `/api/folders/${encodeURIComponent(id)}`, patch || {}),
+    remove: (id)                => request('DELETE', `/api/folders/${encodeURIComponent(id)}`),
+    assignAgent: (agentId, folderId) =>
+      request('PUT', `/api/agents/${encodeURIComponent(agentId)}/folder`, { folderId: folderId || null }),
+  },
+
   mcp: {
     list:     ()      => request('GET',    '/api/system/mcp'),
     add:      (body)  => request('POST',   '/api/system/mcp', body || {}),
