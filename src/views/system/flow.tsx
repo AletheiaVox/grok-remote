@@ -42,6 +42,15 @@ import { api } from '../../lib/api';
 import { fmtTokens } from '../../lib/format';
 import { iconHtml } from '../../lib/icons';
 import { FloatingEdge } from './flow-floating-edge';
+import {
+  SUB_AGENT_KIND_RE,
+  isSubAgentCall,
+  pickSubAgentLabel,
+  pickToolLabel,
+  extractToolContent,
+  mergeToolContent,
+  countActive,
+} from './flow-helpers.js';
 
 // How often we re-poll the agent list. SSE keeps individual cards live; this
 // is only here to pick up newly-spawned or deleted agents.
@@ -56,37 +65,10 @@ const MILESTONE_CAP = 40;
 // previous call's end (or start, if it has no end yet).
 const GROUP_GAP_MS = 3000;
 
-// A tool_call whose kind matches this is treated as a sub-agent invocation
-// rather than a regular tool. Matches "Agent", "Agent(explore)",
-// "agent(planner)", etc. Kept for completeness, but the actual grok signal
-// lives in rawInput.variant === "Task" / rawInput.subagent_type, which
-// isSubAgentCall() below picks up.
-const SUB_AGENT_KIND_RE = /^agent(?:\(.*\))?$/i;
-
-// Treat a tool_call as a sub-agent invocation when ANY of these hold:
-//   1. rawInput.variant === "Task"               (grok subagent tool shape)
-//   2. rawInput.subagent_type is a string         (subagent kind, e.g. "general-purpose")
-//   3. update.kind matches the SUB_AGENT_KIND_RE  (legacy / ACP-style)
-// The actual subagent label comes from rawInput.description, then title,
-// then rawInput.prompt, then "sub-agent".
-function isSubAgentCall(u) {
-  if (!u || typeof u !== 'object') return false;
-  if (SUB_AGENT_KIND_RE.test(String(u.kind || ''))) return true;
-  const ri = u.rawInput;
-  if (ri && typeof ri === 'object') {
-    if (ri.variant === 'Task') return true;
-    if (typeof ri.subagent_type === 'string' && ri.subagent_type) return true;
-  }
-  return false;
-}
-
-function pickSubAgentLabel(u) {
-  const ri = (u && u.rawInput) || {};
-  return (typeof ri.description === 'string' && ri.description.trim())
-    || (typeof u.title === 'string' && u.title.trim())
-    || (typeof ri.prompt === 'string' && ri.prompt.trim().split('\n')[0].slice(0, 80))
-    || 'sub-agent';
-}
+// isSubAgentCall, pickSubAgentLabel, and SUB_AGENT_KIND_RE moved to
+// ./flow-helpers.ts so they're typed + unit-testable. Imported above.
+// Re-exported reference kept here for documentation; remove if unused.
+void SUB_AGENT_KIND_RE;
 
 // Pluck the sub-agent's session id from a sub record. Two sources:
 //   1. SubagentCompleted rawOutput.subagent_id — set when the sub-agent
@@ -2432,59 +2414,8 @@ function saveTokenHistory(id, history) {
   } catch { /* quota or disabled storage: silent */ }
 }
 
-function countActive(calls) {
-  let n = 0;
-  for (const c of Object.values(calls)) {
-    if (!c.endedAt) n++;
-  }
-  return n;
-}
-
-// Extract a short readable label for a tool call from its update object.
-// Prefer the ACP-provided title, then a synthesized one from kind + rawInput.
-function pickToolLabel(u) {
-  if (!u) return 'tool';
-  if (typeof u.title === 'string' && u.title.trim()) return u.title.trim();
-  const ri = u.rawInput;
-  if (ri && typeof ri === 'object') {
-    if (typeof ri.command === 'string' && ri.command.trim()) return ri.command.trim();
-    if (typeof ri.cmd === 'string' && ri.cmd.trim()) return ri.cmd.trim();
-    if (typeof ri.path === 'string' && ri.path.trim()) return `${u.kind || 'tool'}: ${ri.path.trim()}`;
-    if (typeof ri.file_path === 'string' && ri.file_path.trim()) return `${u.kind || 'tool'}: ${ri.file_path.trim()}`;
-    if (typeof ri.url === 'string' && ri.url.trim()) return ri.url.trim();
-  }
-  if (typeof u.kind === 'string' && u.kind.trim()) return u.kind.trim();
-  return 'tool';
-}
-
-// Normalize tool content blocks to a stable shape: [{kind, text}].
-function extractToolContent(content) {
-  if (!content) return [];
-  if (typeof content === 'string') return [{ kind: 'text', text: content }];
-  if (!Array.isArray(content)) return [];
-  return content.map((b) => {
-    if (!b || typeof b !== 'object') return null;
-    if (b.type === 'content' || b.type === 'text') {
-      const inner = (b.content && b.content.text) || b.text || b.content || '';
-      return { kind: 'text', text: typeof inner === 'string' ? inner : JSON.stringify(inner) };
-    }
-    if (b.text) return { kind: 'text', text: String(b.text) };
-    if (b.content && typeof b.content === 'string') return { kind: 'text', text: b.content };
-    return { kind: b.type || 'block', text: JSON.stringify(b) };
-  }).filter(Boolean);
-}
-
-// Concat new content blocks onto existing ones, deduplicating exact matches
-// at the tail so repeated full snapshots don't double up.
-function mergeToolContent(prev, next) {
-  if (!Array.isArray(prev) || !prev.length) return next;
-  if (!Array.isArray(next) || !next.length) return prev;
-  const last = prev[prev.length - 1];
-  if (last && next[0] && last.kind === next[0].kind && last.text === next[0].text) {
-    return prev.concat(next.slice(1));
-  }
-  return prev.concat(next);
-}
+// countActive, pickToolLabel, extractToolContent, mergeToolContent moved to
+// ./flow-helpers.ts. Imported at the top of the file.
 
 function fmtDuration(ms) {
   if (!Number.isFinite(ms) || ms < 0) return '';
