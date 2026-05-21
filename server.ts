@@ -10,6 +10,13 @@ import os from 'node:os';
 
 import { AgentManager, type PublicAgent } from './lib/agent-manager.js';
 import { load as loadSettings, save as saveSettings } from './lib/settings.js';
+import {
+  listFolders,
+  createFolder,
+  updateFolder,
+  removeFolder,
+  assignAgentToFolder,
+} from './lib/folders.js';
 import { startRetentionTimer } from './lib/retention.js';
 import { inferDevServerUrl } from './lib/dev-url.js';
 import { readAll as readHistory } from './lib/history.js';
@@ -246,6 +253,54 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: string,
     return;
   }
 
+  if (url === '/api/folders' && method === 'GET') {
+    sendJson(res, 200, listFolders());
+    return;
+  }
+
+  if (url === '/api/folders' && method === 'POST') {
+    try {
+      const body = (await readJsonBody(req) || {}) as Record<string, unknown>;
+      const name = typeof body['name'] === 'string' ? body['name'] : '';
+      const f = createFolder(name);
+      sendJson(res, 201, f);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 400, { ok: false, error: msg });
+    }
+    return;
+  }
+
+  {
+    const fm = url.match(/^\/api\/folders\/([^\/?]+)$/);
+    if (fm) {
+      const id = fm[1] || '';
+      if (method === 'PATCH') {
+        try {
+          const body = (await readJsonBody(req) || {}) as Record<string, unknown>;
+          const patch: { name?: string; agentIds?: string[] } = {};
+          if (typeof body['name'] === 'string') patch.name = body['name'];
+          if (Array.isArray(body['agentIds'])) {
+            patch.agentIds = (body['agentIds'] as unknown[])
+              .filter((x): x is string => typeof x === 'string');
+          }
+          const out = updateFolder(id, patch);
+          sendJson(res, 200, out);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const code = msg === 'folder not found' ? 404 : 400;
+          sendJson(res, code, { ok: false, error: msg });
+        }
+        return;
+      }
+      if (method === 'DELETE') {
+        const ok = removeFolder(id);
+        sendJson(res, ok ? 200 : 404, { ok });
+        return;
+      }
+    }
+  }
+
   if (url === '/api/bg-terminals' && method === 'GET') {
     handleGlobalBgTerminals(_req(req), res);
     return;
@@ -393,6 +448,20 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: string,
     if (suffix === '' && method === 'DELETE') {
       const ok = await manager.kill(id);
       sendJson(res, ok ? 200 : 404, { ok });
+      return;
+    }
+    if (suffix === '/folder' && method === 'PUT') {
+      try {
+        const body = (await readJsonBody(req) || {}) as Record<string, unknown>;
+        const raw = body['folderId'];
+        const folderId = raw === null || raw === undefined ? null : String(raw);
+        const out = assignAgentToFolder(id, folderId);
+        sendJson(res, 200, { ok: true, folder: out });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const code = msg === 'folder not found' ? 404 : 400;
+        sendJson(res, code, { ok: false, error: msg });
+      }
       return;
     }
     if (suffix === '/prompt' && method === 'POST') {
