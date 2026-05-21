@@ -2038,27 +2038,6 @@ body::before {
   margin-top: 10px;
 }
 
-/* ── bottombar ──────────────────────────────────────── */
-.bottombar {
-  position: relative;
-  z-index: 2;
-  text-align: center;
-  color: var(--dim);
-  font-size: 11px;
-  padding: 14px 22px 18px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-soft);
-}
-.bottombar .sep {
-  margin: 0 8px;
-  color: var(--dim);
-}
-.bottombar a {
-  color: var(--muted);
-  text-decoration: none;
-}
-.bottombar a:hover { color: var(--teal); }
-
 /* ── scrollbar (thin everywhere; no extra padding around) ── */
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 ::-webkit-scrollbar { width: 5px; height: 5px; }
@@ -2984,12 +2963,6 @@ body::before {
   padding-left: calc(22px + env(safe-area-inset-left));
   padding-right: calc(22px + env(safe-area-inset-right));
 }
-.bottombar {
-  padding-bottom: calc(18px + env(safe-area-inset-bottom));
-  padding-left: calc(22px + env(safe-area-inset-left));
-  padding-right: calc(22px + env(safe-area-inset-right));
-}
-
 /* keep chat scroll contained on touch. */
 .chat-stream {
   overscroll-behavior: contain;
@@ -7554,7 +7527,6 @@ body::before {
   z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   height: 26px;
   padding: 0 14px;
@@ -7570,7 +7542,25 @@ body::before {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex: 0 0 auto;
 }
+.app-footer__right { margin-left: auto; }
+.app-footer__center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-footer__disclaimer { color: var(--dim); }
+.app-footer__credit {
+  color: var(--muted);
+  text-decoration: none;
+}
+.app-footer__credit:hover { color: var(--teal); }
 .app-footer__brand { color: var(--dim); }
 .app-footer__version { color: var(--text); font-weight: 600; }
 .app-footer__sep { color: var(--dim); }
@@ -7666,9 +7656,12 @@ body::before {
   transform: translateY(0);
 }
 
+@media (max-width: 720px) {
+  .app-footer__center { display: none; }
+}
 @media (max-width: 700px) {
   .app-footer { padding: 0 10px; gap: 8px; }
-  .app-footer__sep,
+  .app-footer__left .app-footer__sep,
   .app-footer__sha { display: none; }
   .app-footer__update-label { display: none; }
   .app-footer__update-btn { padding: 2px 8px; }

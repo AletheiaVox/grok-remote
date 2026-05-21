@@ -24,6 +24,7 @@ type LatestInfo =
 
 let footerEl: HTMLElement | null = null;
 let leftEl: HTMLButtonElement | null = null;
+let centerEl: HTMLDivElement | null = null;
 let rightEl: HTMLDivElement | null = null;
 let updateBtn: HTMLButtonElement | null = null;
 let currentInfo: CurrentInfo | null = null;
@@ -54,16 +55,22 @@ export function installVersionFooter({ host }: InstallVersionFooterOptions = {})
     el('span', { class: 'app-footer__sha', title: 'git sha' }, '...'),
   ) as HTMLButtonElement;
 
+  centerEl = el('div', { class: 'app-footer__center' },
+    el('span', { class: 'app-footer__disclaimer' }, 'not affiliated with xAI, grok, or Tailscale'),
+    el('span', { class: 'app-footer__sep' }, '·'),
+    el('a', {
+      class: 'app-footer__credit',
+      href: 'https://x.com/daniel_farinax',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    }, '@daniel_farinax'),
+  ) as HTMLDivElement;
+
   rightEl = el('div', { class: 'app-footer__right' }) as HTMLDivElement;
 
-  footerEl = el('footer', { class: 'app-footer', role: 'contentinfo' }, leftEl, rightEl) as HTMLElement;
+  footerEl = el('footer', { class: 'app-footer', role: 'contentinfo' }, leftEl, centerEl, rightEl) as HTMLElement;
   const parent = host || document.body;
-  const bottombar = parent.querySelector ? parent.querySelector('.bottombar') : null;
-  if (bottombar && bottombar.parentNode === parent) {
-    parent.insertBefore(footerEl, bottombar);
-  } else {
-    parent.appendChild(footerEl);
-  }
+  parent.appendChild(footerEl);
 
   document.body.classList.add('has-app-footer');
 
