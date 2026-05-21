@@ -180,7 +180,8 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | Status | File                          | Target                          |
 |--------|-------------------------------|----------------------------------|
 | [x]    | src/lib/render.js             | src/lib/render.ts                |
-| [ ]    | src/views/chat.js             | src/views/chat.ts                |
+| [x]    | src/views/chat.js             | src/views/chat.ts                | <!-- @ts-nocheck for now, strict types in Phase 10 -->
+
 | [x]    | src/main.js                   | src/main.ts                      |
 
 ### Phase 8 — tests
@@ -223,6 +224,7 @@ logged-in `grok` CLI on the host.
 - [ ] update README's repo layout section
 - [ ] document local integration test runner in README
 - [ ] remove `// @ts-nocheck` from `src/views/system/flow.tsx` and add real types
+- [ ] remove `// @ts-nocheck` from `src/views/chat.ts` and add real types
 - [ ] fix backlog of `tsc --noEmit` errors accumulated through phases 4-6
       (server.ts drag events, version-footer LatestInfo, settings PageModule,
        mcp AddServerBody index sig, worktrees Filters/GcState casts, etc.)

@@ -1,4 +1,10 @@
+// @ts-nocheck
 // Per-agent conversation pane with live SSE streaming.
+//
+// Ported verbatim from chat.js. Full strict typing of the SSE event reducers,
+// DOM mounting, and dynamic ACP payload narrowing is deferred to Phase 10.
+// The build (vite/esbuild) strips types so runtime behavior is identical to
+// the .js version.
 //
 // Rendering rules (from PROTOCOL.md, frontend section):
 //   per turn, in chronological order:
