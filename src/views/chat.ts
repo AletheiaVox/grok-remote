@@ -38,6 +38,7 @@ import {
   renderErrorBanner,
   renderToast,
 } from '../lib/render';
+import { unwrap, extractText } from '../lib/acp-payload.js';
 import { copyToClipboard, serializeConversation, serializeResumeCommand } from '../lib/copy';
 import { iconHtml } from '../lib/icons';
 import { fmtTokens } from '../lib/format';
@@ -3064,21 +3065,5 @@ export class ChatView {
   }
 }
 
-// ── helpers ──────────────────────────────────────────────────────────
-
-function unwrap(payload) {
-  // Server unwraps `update`; but some history endpoints may wrap it.
-  if (payload && payload.update && typeof payload.update === 'object') return payload.update;
-  return payload || {};
-}
-
-function extractText(payload) {
-  if (!payload) return null;
-  if (typeof payload === 'string') return payload;
-  if (payload.content) {
-    if (typeof payload.content === 'string') return payload.content;
-    if (typeof payload.content.text === 'string') return payload.content.text;
-  }
-  if (typeof payload.text === 'string') return payload.text;
-  return null;
-}
+// `unwrap` and `extractText` moved to ../lib/acp-payload.ts so they're
+// typed + unit-testable. Imported above.

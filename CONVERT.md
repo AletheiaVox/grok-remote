@@ -209,6 +209,7 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | (new)                                 | test/terminal-host.test.ts               |
 | [x]    | (new)                                 | test/agent-manager-helpers.test.ts       |
 | [x]    | (new)                                 | test/agent-manager-bg.test.ts            |
+| [x]    | (new)                                 | test/acp-payload.test.ts                 |
 | [ ]    | (new)                                 | test/render-todo.test.ts                 |
 | [ ]    | (new)                                 | test/render-attachments.test.ts          |
 | [ ]    | (new)                                 | test/agent-manager.test.ts               |
