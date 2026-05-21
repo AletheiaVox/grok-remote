@@ -193,6 +193,8 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | test/user-attachments.test.js         | test/user-attachments.test.ts            |
 | [x]    | (new)                                 | test/format.test.ts                      |
 | [x]    | (new)                                 | test/dev-url.test.ts                     |
+| [x]    | (new)                                 | test/copy.test.ts                        |
+| [x]    | (new)                                 | test/themes.test.ts                      |
 | [ ]    | (new)                                 | test/render-todo.test.ts                 |
 | [ ]    | (new)                                 | test/render-attachments.test.ts          |
 | [ ]    | (new)                                 | test/agent-manager.test.ts               |
