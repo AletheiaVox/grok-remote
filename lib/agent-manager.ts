@@ -113,7 +113,7 @@ export interface PromptInput {
   attachments?: PromptAttachment[];
 }
 
-interface SavedFile {
+export interface SavedFile {
   rel: string;
   abs: string;
   mimeType: string | null;
@@ -239,7 +239,7 @@ const MIME_EXT: Record<string, string> = {
   'image/svg+xml': '.svg',
 };
 
-function sanitizeFilename(name: string | null | undefined): string {
+export function sanitizeFilename(name: string | null | undefined): string {
   return String(name || '')
     .replace(/[\\/]/g, '_')
     .replace(/[^A-Za-z0-9._-]/g, '_')
@@ -247,7 +247,7 @@ function sanitizeFilename(name: string | null | undefined): string {
     .slice(0, 100);
 }
 
-function uniqueUploadName(dir: string, requestedName: string | undefined, mimeType: string | undefined): string {
+export function uniqueUploadName(dir: string, requestedName: string | undefined, mimeType: string | undefined): string {
   let raw = sanitizeFilename(requestedName);
   if (!raw) {
     const ext = (mimeType && MIME_EXT[mimeType]) || '';
@@ -263,14 +263,14 @@ function uniqueUploadName(dir: string, requestedName: string | undefined, mimeTy
   return candidate;
 }
 
-function humanSize(bytes: number): string {
+export function humanSize(bytes: number): string {
   if (!Number.isFinite(bytes)) return '? bytes';
   if (bytes < 1024) return `${bytes} bytes`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} kB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function attachmentLine(f: SavedFile): string {
+export function attachmentLine(f: SavedFile): string {
   const size = humanSize(f.size);
   return `- ${f.abs} (${f.mimeType || 'application/octet-stream'}, ${size})`;
 }

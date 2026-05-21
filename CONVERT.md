@@ -207,6 +207,7 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 | [x]    | (new)                                 | test/fs-host.test.ts                     |
 | [x]    | (new)                                 | test/sse-client.test.ts                  |
 | [x]    | (new)                                 | test/terminal-host.test.ts               |
+| [x]    | (new)                                 | test/agent-manager-helpers.test.ts       |
 | [ ]    | (new)                                 | test/render-todo.test.ts                 |
 | [ ]    | (new)                                 | test/render-attachments.test.ts          |
 | [ ]    | (new)                                 | test/agent-manager.test.ts               |
