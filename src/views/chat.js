@@ -12,7 +12,7 @@
 //       _x.ai/session_notification (toast), error (red banner).
 
 import Split from 'split.js';
-import { api } from '../lib/api.js';
+import { api } from '../lib/api';
 import { openStream } from '../lib/sse';
 import { mountFilesTab, unmountFilesTab } from './files.js';
 import { mountTraceTab, unmountTraceTab } from './trace.js';

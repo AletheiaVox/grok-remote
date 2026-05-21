@@ -1,7 +1,7 @@
 // MCP servers page. Lists configured MCP servers, lets you add/remove, and
 // run `grok mcp doctor` against one or all of them.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 let activeContainer = null;
 let state = {

@@ -1,6 +1,6 @@
 // Models page. Lists what `grok models` knows about. Read-only.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 let activeContainer = null;
 let abortToken      = 0;

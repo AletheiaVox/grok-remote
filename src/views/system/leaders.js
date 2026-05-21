@@ -4,7 +4,7 @@
 // the user open a JSON `info` panel and a small profile panel that toggles
 // status / start / stop CPU profiling.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 let activeContainer = null;
 let state = {

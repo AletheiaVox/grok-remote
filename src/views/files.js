@@ -1,7 +1,7 @@
 // Files tab: lists the agent's cwd and previews text files.
 // Mounted by chat.js when the Files tab is selected.
 
-import { api } from '../lib/api.js';
+import { api } from '../lib/api';
 import { el, escapeHtml } from '../lib/render.js';
 import { iconHtml } from '../lib/icons';
 

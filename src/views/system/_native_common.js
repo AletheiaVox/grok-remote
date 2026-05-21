@@ -9,7 +9,7 @@
 // `system-page-*` and `health-item-*` rules from src/style.css so we do
 // not need new styling.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 /**
  * Fetch the inspect payload via the shared system-health endpoint.

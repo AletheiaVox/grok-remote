@@ -6,7 +6,7 @@
 
 import { el } from '../lib/render.js';
 import { iconHtml } from '../lib/icons';
-import { api } from '../lib/api.js';
+import { api } from '../lib/api';
 
 const STEP_LABELS = {
   open:      'connecting',

@@ -1,15 +1,7 @@
 // Bottom-of-app version footer.
-//
-// Shows the running version + short sha on the left, and an update
-// indicator + "update now" button on the right. Polls /api/version/latest
-// every 10 min to keep the indicator fresh.
-//
-// The footer lives as a sibling of #app inside <body> (added at boot from
-// main.js). It is fixed-height; the dashboard above gets a matching
-// padding-bottom (or height calc) so nothing is hidden behind it.
 
 import { el } from './render.js';
-import { iconHtml } from './icons';
+import { iconHtml } from './icons.js';
 import { api } from './api.js';
 import { openUpdateModal } from '../views/update-modal.js';
 import { openChangelogModal } from '../views/changelog-modal.js';
@@ -17,20 +9,34 @@ import { openChangelogModal } from '../views/changelog-modal.js';
 const POLL_MS = 10 * 60 * 1000;
 const LAST_SEEN_VERSION_KEY = 'grok-remote.update.lastSeenVersion';
 
-let footerEl = null;
-let leftEl = null;
-let rightEl = null;
-let updateBtn = null;
-let currentInfo = null;
-let latestInfo = null;
-let pollTimer = null;
+declare const __APP_VERSION__: string;
 
-export function installVersionFooter({ host } = {}) {
+interface CurrentInfo {
+  version?: string;
+  gitShaShort?: string;
+  gitSha?: string;
+  gitDirty?: boolean;
+}
+
+type LatestInfo =
+  | { ok: true; ahead?: number; behind?: number; [k: string]: unknown }
+  | { ok: false; error?: string };
+
+let footerEl: HTMLElement | null = null;
+let leftEl: HTMLButtonElement | null = null;
+let rightEl: HTMLDivElement | null = null;
+let updateBtn: HTMLButtonElement | null = null;
+let currentInfo: CurrentInfo | null = null;
+let latestInfo: LatestInfo | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+export interface InstallVersionFooterOptions {
+  host?: HTMLElement;
+}
+
+export function installVersionFooter({ host }: InstallVersionFooterOptions = {}): HTMLElement {
   if (footerEl) return footerEl;
 
-  // The whole left cluster acts as a "open changelog" button. We use a
-  // <button> so it gets keyboard focus + a proper click target; the inner
-  // spans keep their existing classes so the existing styles still apply.
   leftEl = el('button', {
     type: 'button',
     class: 'app-footer__left app-footer__left--btn',
@@ -46,14 +52,11 @@ export function installVersionFooter({ host } = {}) {
     el('span', { class: 'app-footer__version' }, 'v?'),
     el('span', { class: 'app-footer__sep' }, '·'),
     el('span', { class: 'app-footer__sha', title: 'git sha' }, '...'),
-  );
+  ) as HTMLButtonElement;
 
-  rightEl = el('div', { class: 'app-footer__right' });
+  rightEl = el('div', { class: 'app-footer__right' }) as HTMLDivElement;
 
-  footerEl = el('footer', { class: 'app-footer', role: 'contentinfo' }, leftEl, rightEl);
-  // Mount as a sibling of #app, just before .bottombar so the small
-  // disclaimer line keeps its place at the very bottom. Falls back to
-  // appendChild on <body> when .bottombar is missing.
+  footerEl = el('footer', { class: 'app-footer', role: 'contentinfo' }, leftEl, rightEl) as HTMLElement;
   const parent = host || document.body;
   const bottombar = parent.querySelector ? parent.querySelector('.bottombar') : null;
   if (bottombar && bottombar.parentNode === parent) {
@@ -62,62 +65,60 @@ export function installVersionFooter({ host } = {}) {
     parent.appendChild(footerEl);
   }
 
-  // Mark <body> so the rest of the layout can pad/shrink to make room.
   document.body.classList.add('has-app-footer');
 
-  // Show any "you just updated" toast if main.js detected a bump.
   maybeShowJustUpdatedToast();
 
-  // Kick off the polls.
-  refreshCurrent();
-  refreshLatest();
+  void refreshCurrent();
+  void refreshLatest();
   pollTimer = setInterval(refreshLatest, POLL_MS);
-  // Also re-poll when the user returns to the tab so they don't see stale
-  // info after closing a laptop overnight.
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) refreshLatest();
+    if (!document.hidden) void refreshLatest();
   });
 
   return footerEl;
 }
 
-async function refreshCurrent() {
+async function refreshCurrent(): Promise<void> {
   try {
-    const data = await api.version.current();
+    const data = await api.version.current() as CurrentInfo;
     currentInfo = data;
     paint();
   } catch {
-    // Not fatal: leave defaults. The brand-version span is the source of
-    // truth for the running version when the endpoint is unreachable.
+    /* not fatal */
   }
 }
 
-async function refreshLatest() {
+async function refreshLatest(): Promise<void> {
   try {
-    const data = await api.version.latest();
+    const data = await api.version.latest() as LatestInfo;
     if (data && data.ok) {
       latestInfo = data;
       paint();
     } else if (data) {
-      latestInfo = { ok: false, error: data.error || 'fetch failed' };
+      latestInfo = { ok: false, error: (data as { error?: string }).error || 'fetch failed' };
       paint();
     }
   } catch (err) {
-    latestInfo = { ok: false, error: err.message };
+    const msg = err instanceof Error ? err.message : String(err);
+    latestInfo = { ok: false, error: msg };
     paint();
   }
 }
 
-function paint() {
-  if (!footerEl) return;
+function paint(): void {
+  if (!footerEl || !leftEl || !rightEl) return;
   const ver = (currentInfo && currentInfo.version) || (typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '?');
   const sha = (currentInfo && currentInfo.gitShaShort) || '';
   const dirty = !!(currentInfo && currentInfo.gitDirty);
 
-  leftEl.querySelector('.app-footer__version').textContent = `v${ver}`;
-  const shaEl = leftEl.querySelector('.app-footer__sha');
-  shaEl.textContent = sha ? `${sha}${dirty ? '*' : ''}` : '';
-  shaEl.title = sha ? `${currentInfo.gitSha}${dirty ? ' (working tree dirty)' : ''}` : 'git sha';
+  const verEl = leftEl.querySelector('.app-footer__version');
+  if (verEl) verEl.textContent = `v${ver}`;
+  const shaEl = leftEl.querySelector('.app-footer__sha') as HTMLElement | null;
+  if (shaEl) {
+    shaEl.textContent = sha ? `${sha}${dirty ? '*' : ''}` : '';
+    shaEl.title = sha && currentInfo ? `${currentInfo.gitSha}${dirty ? ' (working tree dirty)' : ''}` : 'git sha';
+  }
 
   rightEl.replaceChildren();
 
@@ -133,7 +134,7 @@ function paint() {
     rightEl.appendChild(makeIconBtn('refresh-cw', 'retry', () => {
       latestInfo = null;
       paint();
-      refreshLatest();
+      void refreshLatest();
     }));
     return;
   }
@@ -148,12 +149,10 @@ function paint() {
     return;
   }
   if (behind === 0 && ahead > 0) {
-    // local is ahead of origin/main (likely dev work). Not an update target.
     rightEl.appendChild(el('span', { class: 'app-footer__hint' },
       `local is ${ahead} ahead of origin/main`));
     return;
   }
-  // behind > 0: show update affordance.
   const txt = `${behind} commit${behind === 1 ? '' : 's'} behind`;
   rightEl.appendChild(el('span', { class: 'app-footer__hint app-footer__hint--avail' },
     el('span', { class: 'app-footer__hint-dot' }),
@@ -169,11 +168,11 @@ function paint() {
   },
     el('span', { class: 'app-footer__update-ico', html: iconHtml('refresh-cw') }),
     el('span', { class: 'app-footer__update-label' }, 'update now'),
-  );
+  ) as HTMLButtonElement;
   rightEl.appendChild(updateBtn);
 }
 
-function makeIconBtn(name, title, onclick) {
+function makeIconBtn(name: string, title: string, onclick: () => void): HTMLButtonElement {
   return el('button', {
     type: 'button',
     class: 'app-footer__icon-btn',
@@ -181,18 +180,18 @@ function makeIconBtn(name, title, onclick) {
     'aria-label': title,
     onclick,
     html: iconHtml(name),
-  });
+  }) as HTMLButtonElement;
 }
 
-function maybeShowJustUpdatedToast() {
-  let justUpdated = null;
+function maybeShowJustUpdatedToast(): void {
+  let justUpdated: string | null = null;
   try { justUpdated = localStorage.getItem('grok-remote.update.justUpdatedTo'); }
   catch { /* ignore */ }
   if (!justUpdated) return;
   try { localStorage.removeItem('grok-remote.update.justUpdatedTo'); }
   catch { /* ignore */ }
 
-  let prev = null;
+  let prev: string | null = null;
   try { prev = localStorage.getItem('grok-remote.update.beforeVersion'); }
   catch { /* ignore */ }
   try {
@@ -215,3 +214,6 @@ function maybeShowJustUpdatedToast() {
   try { localStorage.setItem(LAST_SEEN_VERSION_KEY, justUpdated); }
   catch { /* ignore */ }
 }
+
+// Avoid an unused-warning for pollTimer if strict tsconfig flips on later.
+void pollTimer;

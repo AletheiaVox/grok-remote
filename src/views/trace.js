@@ -3,7 +3,7 @@
 // card, RPC timeline, method distribution bars, chat-history list, system
 // prompt viewer, raw-file dump.
 
-import { api } from '../lib/api.js';
+import { api } from '../lib/api';
 import { el, escapeHtml } from '../lib/render.js';
 
 let activeState = null;

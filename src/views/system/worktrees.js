@@ -4,7 +4,7 @@
 //   list  - filter / show / rm / gc the grok-managed git worktrees
 //   db    - inspect & rebuild the local index db
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 let activeContainer = null;
 let state = {

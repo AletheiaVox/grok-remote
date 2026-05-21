@@ -140,8 +140,8 @@ Status legend: `[ ]` pending · `[x]` converted · `[!]` blocked (note) ·
 
 | Status | File                              | Target                              |
 |--------|-----------------------------------|--------------------------------------|
-| [ ]    | src/lib/api.js                    | src/lib/api.ts                       |
-| [ ]    | src/lib/version-footer.js         | src/lib/version-footer.ts            |
+| [x]    | src/lib/api.js                    | src/lib/api.ts                       |
+| [x]    | src/lib/version-footer.js         | src/lib/version-footer.ts            |
 | [ ]    | src/views/changelog-modal.js      | src/views/changelog-modal.ts         |
 | [ ]    | src/views/update-modal.js         | src/views/update-modal.ts            |
 | [ ]    | src/views/settings.js             | src/views/settings.ts                |

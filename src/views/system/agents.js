@@ -11,7 +11,7 @@
 // "agents" you see in the home view are running *conversations*; that
 // view lives in src/views/agents.js.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 import {
   loadInspect, buildPageShell, setStatusLine, clearBody,
   addConfigFilesBanner,

@@ -7,7 +7,7 @@
 //
 // Endpoints used live in lib/routes/system/memory.js.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 const SCOPE_LABEL = {
   workspace: 'workspace',

@@ -11,7 +11,7 @@
 // mount(container) / unmount() API. SettingsView never knows what's
 // inside those pages.
 
-import { api } from '../lib/api.js';
+import { api } from '../lib/api';
 import { el } from '../lib/render.js';
 import { iconHtml } from '../lib/icons';
 import { THEMES, getTheme, setTheme } from '../lib/themes';

@@ -9,14 +9,14 @@
 // is opened (turns.length === 0). The topbar keeps a static GR mark.
 
 import Split from 'split.js';
-import { api } from './lib/api.js';
+import { api } from './lib/api';
 import { AgentsSidebar } from './views/agents.js';
 import { ChatView } from './views/chat.js';
 import { SettingsView } from './views/settings.js';
 import { el } from './lib/render.js';
 import { registerPwa } from './lib/pwa';
 import { applyTheme, getTheme, nextTheme, getThemeMeta } from './lib/themes';
-import { installVersionFooter } from './lib/version-footer.js';
+import { installVersionFooter } from './lib/version-footer';
 import { SYSTEM_PAGES, getSystemPage, getSettingsPage } from './views/system/index.js';
 import { iconHtml } from './lib/icons';
 

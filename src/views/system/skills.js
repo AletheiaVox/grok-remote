@@ -15,7 +15,7 @@
 // Archived skills appear in a collapsible section at the bottom with a
 // "restore" button per card.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 let activeContainer = null;
 let aborted = false;

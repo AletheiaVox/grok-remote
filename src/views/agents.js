@@ -6,7 +6,7 @@
 //   2. unstarred + active
 // Archived items live under a separate "archived" toggle section.
 
-import { api } from '../lib/api.js';
+import { api } from '../lib/api';
 import { el } from '../lib/render.js';
 import { fmtTokens } from '../lib/format';
 

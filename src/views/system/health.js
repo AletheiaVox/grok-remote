@@ -4,7 +4,7 @@
 // small "server info" block. A recheck button re-runs the underlying
 // commands.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 let activeContainer = null;
 let abortToken      = 0;

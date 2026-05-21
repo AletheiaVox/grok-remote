@@ -6,7 +6,7 @@
 // only lights up when the session id matches one of our backend agents
 // (sessions from the grok TUI need to be imported first).
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 let activeContainer = null;
 let state = {

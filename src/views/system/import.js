@@ -10,7 +10,7 @@
 //   3. submit button that combines both into the targets argv.
 //   4. result panel below with one row per NDJSON event.
 
-import { api } from '../../lib/api.js';
+import { api } from '../../lib/api';
 
 let activeContainer = null;
 let state = {
