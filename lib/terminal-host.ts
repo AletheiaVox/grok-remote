@@ -156,6 +156,13 @@ export function createTerminalHost({ getCwd }: TerminalHostOptions): TerminalHos
     proc.stderr?.on('data', (d: Buffer) => append(t, d));
     proc.on('error', (err: Error) => {
       append(t, `\n[terminal-host] spawn error: ${err.message}\n`);
+      // A failed spawn (e.g. ENOENT) never emits 'exit'; settle waiters so
+      // waitForExit callers don't hang forever on a command that never ran.
+      if (!t.exited) {
+        t.exited = true;
+        t.exitStatus = { exitCode: null, signal: null };
+        for (const w of t.waiters.splice(0)) w({ exitStatus: t.exitStatus });
+      }
     });
     proc.on('exit', (code, signal) => {
       t.exited = true;
